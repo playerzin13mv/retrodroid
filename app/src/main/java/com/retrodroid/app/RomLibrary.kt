@@ -31,9 +31,10 @@ class RomLibrary(private val context: Context) {
 
     fun delete(rom: File) {
         rom.delete()
-        val saves = File(context.filesDir, "saves")
-        File(saves, rom.nameWithoutExtension + ".srm").delete()
-        File(saves, rom.nameWithoutExtension + ".state").delete()
+        // apaga SRAM, save states (slots + miniaturas) e capa
+        val prefix = rom.nameWithoutExtension + "."
+        File(context.filesDir, "saves").listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
+        File(context.filesDir, "covers").listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
     }
 
     private fun displayName(uri: Uri): String? =

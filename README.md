@@ -1,13 +1,14 @@
 # RetroDroid
 
-Emulador Android (Kotlin + LibretroDroid) para SNES, Mega Drive e NES.
+Emulador Android (Kotlin + LibretroDroid) para SNES, Mega Drive, NES e Nintendo 64.
 
-## Como gerar o APK pelo celular
-1. Crie um repositório no GitHub e suba TODOS os arquivos desta pasta (inclusive `.github/`).
-2. Vá em **Actions → Build APK → Run workflow** (ou é só dar push).
-3. Quando terminar (verde), abra a execução e baixe o artefato **RetroDroid-apk**.
-4. Descompacte o zip e instale o `.apk`.
+## Gerar o APK pelo celular
+1. Suba TODOS os arquivos desta pasta (inclusive `.github/`) para um repositório no GitHub.
+2. **Actions → Build APK → Run workflow** (ou dê push).
+3. Quando ficar verde, baixe o artefato **RetroDroid-apk**, descompacte e instale o `.apk`.
 
-## Cores usados
-- SNES: Snes9x  • Mega Drive: Genesis Plus GX  • NES: FCEUmm
-(baixados automaticamente pelo workflow)
+O workflow descobre sozinho uma versão da LibretroDroid que existe no JitPack (veja o passo
+"Descobrir versão..." no log) e baixa os cores: Snes9x, Genesis Plus GX, FCEUmm e Mupen64Plus-Next.
+
+## Formatos
+.sfc .smc (SNES) • .gen .md .smd .bin (Mega Drive) • .nes (NES) • .z64 .n64 .v64 (Nintendo 64)
