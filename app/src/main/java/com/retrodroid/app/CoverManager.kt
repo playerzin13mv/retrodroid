@@ -93,33 +93,60 @@ class CoverManager(private val context: Context) {
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
-    /** Card gerado (quando não há capa): degradê suave + nome do jogo. */
-    fun generated(rom: File): Bitmap {
-        val key = "g:" + rom.name
+    /** Cor de destaque do jogo: média da capa (se houver) ou derivada do nome; sempre bem vibrante. */
+    fun accent(rom: File, title: String): Int {
+        val cover = load(rom)
+        val base = if (cover != null) {
+            try { Bitmap.createScaledBitmap(cover, 1, 1, true).getPixel(0, 0) } catch (e: Exception) { hueColor(title, 0.7f, 0.95f) }
+        } else hueColor(title, 0.7f, 0.95f)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(base, hsv)
+        hsv[1] = hsv[1].coerceIn(0.55f, 1f)
+        hsv[2] = hsv[2].coerceIn(0.85f, 1f)
+        return Color.HSVToColor(hsv)
+    }
+
+    private fun hueColor(title: String, s: Float, v: Float): Int =
+        Color.HSVToColor(floatArrayOf((abs(title.hashCode()) % 360).toFloat(), s, v))
+
+    /** Card gerado (quando não há capa): degradê vibrante + nome do jogo + marca d'água do console. */
+    fun generated(rom: File, title: String, system: GameSystem?): Bitmap {
+        val key = "g:" + rom.name + "|" + title
         cache.get(key)?.let { return it }
         val w = 480; val h = 600
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
-        val hue = (abs(rom.nameWithoutExtension.hashCode()) % 360).toFloat()
-        val top = Color.HSVToColor(floatArrayOf(hue, 0.32f, 0.60f))
-        val bottom = Color.HSVToColor(floatArrayOf(hue, 0.50f, 0.24f))
+        val hue = (abs(title.hashCode()) % 360).toFloat()
+        val top = Color.HSVToColor(floatArrayOf(hue, 0.60f, 1.00f))
+        val bottom = Color.HSVToColor(floatArrayOf((hue + 28f) % 360f, 0.85f, 0.42f))
         val p = Paint(Paint.ANTI_ALIAS_FLAG)
-        p.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), top, bottom, Shader.TileMode.CLAMP)
+        p.shader = LinearGradient(0f, 0f, w * 0.4f, h.toFloat(), top, bottom, Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), p)
         p.shader = null
-        p.color = Color.argb(28, 255, 255, 255)
-        c.drawCircle(w * 0.85f, h * 0.15f, w * 0.55f, p)
-        c.drawCircle(w * 0.1f, h * 0.95f, w * 0.45f, p)
+        p.color = Color.argb(40, 255, 255, 255)
+        c.drawCircle(w * 0.9f, h * 0.12f, w * 0.60f, p)
+        c.drawCircle(w * 0.05f, h * 0.98f, w * 0.50f, p)
+        p.color = Color.argb(26, 255, 255, 255)
+        c.drawCircle(w * 0.5f, h * 0.55f, w * 0.30f, p)
 
-        val title = rom.nameWithoutExtension.replace(Regex("\\s*[\\(\\[].*?[\\)\\]]"), "").trim().ifEmpty { rom.nameWithoutExtension }
-        val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE; textSize = 54f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            setShadowLayer(8f, 0f, 3f, Color.argb(120, 0, 0, 0))
+        // marca d'água do console
+        if (system != null) {
+            val wm = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(46, 255, 255, 255); textSize = 150f; textAlign = Paint.Align.CENTER
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            }
+            c.drawText(system.badge, w / 2f, h * 0.92f, wm)
         }
-        val layout = StaticLayout.Builder.obtain(title, 0, title.length, tp, w - 80)
+
+        val clean = title.replace(Regex("\\s*[\\(\\[].*?[\\)\\]]"), "").trim().ifEmpty { title }
+        val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE; textSize = 56f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            setShadowLayer(10f, 0f, 4f, Color.argb(140, 0, 0, 0))
+        }
+        val layout = StaticLayout.Builder.obtain(clean, 0, clean.length, tp, w - 80)
             .setAlignment(Layout.Alignment.ALIGN_CENTER).setMaxLines(5).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
         c.save()
-        c.translate(40f, (h - layout.height) / 2f)
+        c.translate(40f, (h - layout.height) / 2f - 20f)
         layout.draw(c)
         c.restore()
         cache.put(key, bmp)

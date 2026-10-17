@@ -6,6 +6,9 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -42,6 +45,7 @@ class ControlsOverlay(
 
     private fun bmp(name: String): Bitmap {
         val id = resources.getIdentifier(name, "drawable", context.packageName)
+        if (id == 0) throw IllegalStateException("Imagem não encontrada: $name")
         return BitmapFactory.decodeResource(resources, id)
     }
 
@@ -59,17 +63,54 @@ class ControlsOverlay(
     private var stickY = 0f
     private var lastRight = Pair(0f, 0f)
 
-    /** Cópia (thread-safe) dos botões apertados agora; usada pelo gravador de vídeo. */
-    @Volatile var hudSnapshot: List<Bitmap> = emptyList()
+    /** ids dos botões apertados agora (sem o analógico); usado pelo controle que aparece no vídeo. */
+    @Volatile var pressedIds: Set<String> = emptySet()
         private set
+
+    /** Recebe uma frase tipo "▼ A → tecla 96" (diagnóstico). */
+    var onDebug: ((String) -> Unit)? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val keyDownAt = HashMap<Int, Long>()
+    private val pendingRelease = HashMap<Int, Runnable>()
 
     private companion object {
         const val UP = 1; const val DOWN = 2; const val LEFT = 4; const val RIGHT = 8
+        const val MIN_HOLD_MS = 60L   // toda tecla fica apertada pelo menos isso (toque rápido não se perde)
+    }
+
+    private fun pressKey(code: Int) {
+        val pending = pendingRelease.remove(code)
+        if (pending != null) {          // ainda estava "apertada" esperando soltar: só cancela a soltura
+            handler.removeCallbacks(pending)
+            keyDownAt[code] = SystemClock.uptimeMillis()
+            return
+        }
+        keyDownAt[code] = SystemClock.uptimeMillis()
+        onKey(true, code)
+    }
+
+    private fun releaseKey(code: Int) {
+        val elapsed = SystemClock.uptimeMillis() - (keyDownAt[code] ?: 0L)
+        if (elapsed >= MIN_HOLD_MS) {
+            keyDownAt.remove(code)
+            onKey(false, code)
+        } else {
+            val r = Runnable {
+                pendingRelease.remove(code)
+                keyDownAt.remove(code)
+                onKey(false, code)
+            }
+            pendingRelease[code] = r
+            handler.postDelayed(r, MIN_HOLD_MS - elapsed)
+        }
     }
 
     init {
         for (item in Layouts.forSystem(system)) {
-            val c = Ctrl(item, bmp(item.tex + "_solto"), bmp(item.tex + "_pressionado"))
+            // o D-Pad tem imagens próprias por direção (dpad_up_pressionado etc.), então não há "dpad_pressionado"
+            val pressedName = if (item.kind == Kind.DPAD) item.tex + "_solto" else item.tex + "_pressionado"
+            val c = Ctrl(item, bmp(item.tex + "_solto"), bmp(pressedName))
             when (item.kind) {
                 Kind.DPAD -> dpad = c
                 Kind.STICK -> stick = c
@@ -218,11 +259,13 @@ class ControlsOverlay(
 
         // botões (teclas) e botões C (analógico direito)
         for (c in down) if (c !in newDown) {
-            if (c.item.kind == Kind.BUTTON) onKey(false, c.item.key)
+            if (c.item.kind == Kind.BUTTON) releaseKey(c.item.key)
+            onDebug?.invoke("▲ ${c.item.id.uppercase()} solto")
             changed = true
         }
         for (c in newDown) if (c !in down) {
-            if (c.item.kind == Kind.BUTTON) onKey(true, c.item.key)
+            if (c.item.kind == Kind.BUTTON) pressKey(c.item.key)
+            onDebug?.invoke("▼ ${c.item.id.uppercase()} → " + (if (c.item.kind == Kind.BUTTON) "tecla ${c.item.key}" else "analógico direito"))
             buzz(); changed = true
         }
         down.clear(); down.addAll(newDown)
@@ -243,7 +286,8 @@ class ControlsOverlay(
                 UP to KeyEvent.KEYCODE_DPAD_UP, DOWN to KeyEvent.KEYCODE_DPAD_DOWN,
                 LEFT to KeyEvent.KEYCODE_DPAD_LEFT, RIGHT to KeyEvent.KEYCODE_DPAD_RIGHT
             )
-            for ((bit, key) in keys) if (diff and bit != 0) onKey(newMask and bit != 0, key)
+            for ((bit, key) in keys) if (diff and bit != 0) { if (newMask and bit != 0) pressKey(key) else releaseKey(key) }
+            onDebug?.invoke("D-Pad: " + (if (newMask == 0) "solto" else dpadName(newMask)))
             if (newMask and dpadMask.inv() != 0) buzz()
             dpadMask = newMask
             changed = true
@@ -269,10 +313,12 @@ class ControlsOverlay(
     }
 
     private fun updateHud() {
-        val list = ArrayList<Bitmap>()
-        if (dpadMask != 0) dpadPressedBmp[dpadName(dpadMask)]?.let { list += it }
-        if (stickId != -1) list += knobPressed
-        for (c in down) list += c.pressed
-        hudSnapshot = list
+        val ids = HashSet<String>()
+        if (dpadMask and UP != 0) ids += "up"
+        if (dpadMask and DOWN != 0) ids += "down"
+        if (dpadMask and LEFT != 0) ids += "left"
+        if (dpadMask and RIGHT != 0) ids += "right"
+        for (c in down) ids += c.item.id
+        pressedIds = ids
     }
 }

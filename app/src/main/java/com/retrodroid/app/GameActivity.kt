@@ -1,6 +1,10 @@
 package com.retrodroid.app
 
+import android.Manifest
 import android.app.Dialog
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -29,6 +33,8 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.view.WindowCompat
@@ -60,7 +66,10 @@ class GameActivity : AppCompatActivity() {
 
     private lateinit var fpsText: TextView
     private lateinit var recText: TextView
+    private lateinit var dbgText: TextView
+    private var gameSystem: GameSystem = GameSystem.NES
     private var frames = 0
+    private var speedApplied = false
     private val ui = Handler(Looper.getMainLooper())
 
     private var menu: Dialog? = null
@@ -93,6 +102,7 @@ class GameActivity : AppCompatActivity() {
         saveDir = File(filesDir, "saves").apply { mkdirs() }
         val systemDir = File(filesDir, "system").apply { mkdirs() }
         sramFile = File(saveDir, romFile.nameWithoutExtension + ".srm")
+        gameSystem = system
 
         val corePath = File(applicationInfo.nativeLibraryDir, system.coreLib)
         if (!corePath.exists()) return fail("Core não encontrado: ${system.coreLib}")
@@ -111,19 +121,20 @@ class GameActivity : AppCompatActivity() {
         }
         retroView = view
         lifecycle.addObserver(view)
-        view.frameSpeed = settings.speed
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        val ov = ControlsOverlay(
+        val ov = try { ControlsOverlay(
             this, system, settings,
             onKey = { isDown, keyCode ->
                 view.sendKeyEvent(if (isDown) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, keyCode, 0)
             },
             onLeftStick = { x, y -> view.sendMotionEvent(GLRetroView.MOTION_SOURCE_ANALOG_LEFT, x, y, 0) },
             onRightStick = { x, y -> view.sendMotionEvent(GLRetroView.MOTION_SOURCE_ANALOG_RIGHT, x, y, 0) }
-        )
+        ) } catch (e: Exception) {
+            return fail("Erro nos controles: ${e.message}")
+        }
         touchControls = ov
         root.addView(ov, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
@@ -140,6 +151,21 @@ class GameActivity : AppCompatActivity() {
         root.addView(fpsText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
             leftMargin = dp(60); topMargin = dp(8)
         })
+
+        // diagnóstico dos botões (liga em Configurações Avançadas)
+        dbgText = TextView(this).apply {
+            setTextColor(Color.parseColor("#FFEB3B"))
+            textSize = 13f
+            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
+            setBackgroundColor(Color.parseColor("#99000000"))
+            setPadding(dp(8), dp(3), dp(8), dp(3))
+            text = "toque num botão…"
+            visibility = if (settings.debugInput) View.VISIBLE else View.GONE
+        }
+        root.addView(dbgText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
+            leftMargin = dp(60); topMargin = dp(40)
+        })
+        ov.onDebug = { msg -> if (settings.debugInput) dbgText.text = msg }
 
         // indicador de gravação
         recText = TextView(this).apply {
@@ -173,7 +199,14 @@ class GameActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 view.getGLRetroEvents().collect { ev ->
-                    if (ev.javaClass.simpleName == "FrameRendered") frames++
+                    if (ev.javaClass.simpleName == "FrameRendered") {
+                        frames++
+                        // só mexe na velocidade depois que o core já está rodando (antes disso pode crashar)
+                        if (!speedApplied) {
+                            speedApplied = true
+                            if (settings.speed != 1) view.frameSpeed = settings.speed
+                        }
+                    }
                 }
             } catch (_: Exception) {
             }
@@ -298,7 +331,7 @@ class GameActivity : AppCompatActivity() {
         col.addView(menuButton("Save State") { showSlots(save = true) })
         col.addView(menuButton("Load State") { showSlots(save = false) })
         col.addView(menuButton(if (recorder == null) "Gravar vídeo" else "■ Parar gravação") {
-            if (recorder == null) { startRecording(); menu?.dismiss() } else { stopRecording(); showMain() }
+            if (recorder == null) { beginRecording(); menu?.dismiss() } else { stopRecording(); showMain() }
         })
         col.addView(menuButton("Configurações Avançadas") { showAdvanced() })
         col.addView(menuButton("Sair do jogo") { menu?.dismiss(); finish() })
@@ -406,16 +439,53 @@ class GameActivity : AppCompatActivity() {
         }
     }
 
-    // ----------------------------------------------------------------- vídeo
-    private fun startRecording() {
+    // ----------------------------------------------------------------- vídeo (com áudio)
+    private val audioPermLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) askProjection() else startRecording(null, "Sem permissão de áudio: gravando só a imagem")
+    }
+
+    private val projectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val data = res.data
+        if (res.resultCode == RESULT_OK && data != null) {
+            RecordService.start(applicationContext, res.resultCode, data) { projection ->
+                runOnUiThread {
+                    startRecording(projection, if (projection == null) "Não consegui capturar o áudio: gravando só a imagem" else null)
+                }
+            }
+        } else {
+            startRecording(null, "Captura de áudio negada: gravando só a imagem")
+        }
+    }
+
+    private fun beginRecording() {
+        if (recorder != null) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            askProjection()
+        } else {
+            audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun askProjection() {
+        try {
+            val mpm = getSystemService(MediaProjectionManager::class.java)
+            projectionLauncher.launch(mpm.createScreenCaptureIntent())
+        } catch (e: Exception) {
+            startRecording(null, "Não consegui pedir a captura de áudio: gravando só a imagem")
+        }
+    }
+
+    private fun startRecording(projection: MediaProjection?, note: String?) {
         val v = retroView as? SurfaceView ?: return
         val ov = touchControls ?: return
-        val r = VideoRecorder(v, applicationContext) { ov.hudSnapshot }
+        val r = VideoRecorder(v, applicationContext, gameSystem, { ov.pressedIds }, projection)
         if (r.start()) {
             recorder = r
             recText.visibility = View.VISIBLE
-            Toast.makeText(this, "Gravando… (abra o menu pra parar)", Toast.LENGTH_SHORT).show()
+            val msg = note ?: if (r.hasAudio) "Gravando com áudio… (menu → parar)" else "Gravando só a imagem… (menu → parar)"
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
         } else {
+            RecordService.stop(applicationContext)
             Toast.makeText(this, "Não consegui iniciar a gravação", Toast.LENGTH_LONG).show()
         }
     }
@@ -428,6 +498,7 @@ class GameActivity : AppCompatActivity() {
         val app = applicationContext
         Thread {
             val ok = r.stopAndSave()
+            RecordService.stop(app)
             ui.post {
                 Toast.makeText(app, if (ok) "Vídeo salvo em Filmes/RetroDroid" else "Falha ao salvar o vídeo", Toast.LENGTH_LONG).show()
             }
@@ -453,6 +524,10 @@ class GameActivity : AppCompatActivity() {
             fpsText.visibility = if (it) View.VISIBLE else View.GONE
         })
         col.addView(switchRow("Vibração ao tocar nos botões", settings.haptics) { settings.haptics = it })
+        col.addView(switchRow("Diagnóstico dos botões (mostra a tecla enviada)", settings.debugInput) {
+            settings.debugInput = it
+            dbgText.visibility = if (it) View.VISIBLE else View.GONE
+        })
 
         val opacityLabel = TextView(this).apply {
             text = "Opacidade dos controles: ${settings.overlayOpacity}%"

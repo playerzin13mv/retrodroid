@@ -13,6 +13,10 @@ class Settings(context: Context) {
         get() = p.getBoolean("haptics", true)
         set(v) = p.edit().putBoolean("haptics", v).apply()
 
+    var debugInput: Boolean
+        get() = p.getBoolean("debugInput", false)
+        set(v) = p.edit().putBoolean("debugInput", v).apply()
+
     /** 20..100 (%) */
     var overlayOpacity: Int
         get() = p.getInt("overlayOpacity", 80)

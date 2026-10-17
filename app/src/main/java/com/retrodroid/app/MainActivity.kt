@@ -1,5 +1,8 @@
 package com.retrodroid.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -13,9 +16,11 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,11 +37,13 @@ import java.io.File
 import kotlin.math.abs
 import kotlin.math.min
 
-/** Launcher estilo Switch: fileira horizontal de cards, o do meio cresce; um "tick" a cada jogo que passa. */
+/** Launcher estilo Switch: cards grandes, fundo animado que muda de cor com o jogo, "tick" a cada jogo que passa. */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var library: RomLibrary
     private lateinit var covers: CoverManager
+    private lateinit var titles: TitleStore
+    private lateinit var aurora: AuroraView
     private lateinit var rv: RecyclerView
     private lateinit var lm: LinearLayoutManager
     private lateinit var snap: LinearSnapHelper
@@ -44,7 +51,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gameTitle: TextView
     private lateinit var gameSub: TextView
     private lateinit var countText: TextView
-    private lateinit var emptyHint: TextView
 
     private lateinit var sounds: SoundPool
     private var tickId = 0
@@ -52,8 +58,28 @@ class MainActivity : AppCompatActivity() {
     private var roms: List<File> = emptyList()
     private var d = 1f
     private var coverTarget: File? = null
+    private var firstShow = true
+    private val defaultAccent = Color.parseColor("#6C63FF")
+    private val accentCache = HashMap<String, Int>()
 
     private fun dp(v: Int) = (v * d).toInt()
+
+    private fun titleOf(rom: File) = titles.get(rom) ?: rom.nameWithoutExtension
+
+    private fun accentOf(rom: File): Int {
+        val key = rom.name + "|" + titleOf(rom) + "|" + covers.coverFile(rom).lastModified()
+        return accentCache.getOrPut(key) { covers.accent(rom, titleOf(rom)) }
+    }
+
+    private fun systemColor(s: GameSystem?): Int = Color.parseColor(
+        when (s) {
+            GameSystem.SNES -> "#7B5CFF"
+            GameSystem.MEGADRIVE -> "#2F7BFF"
+            GameSystem.NES -> "#FF4D4D"
+            GameSystem.N64 -> "#1FBF7A"
+            null -> "#555555"
+        }
+    )
 
     private val romPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isEmpty()) return@registerForActivityResult
@@ -77,6 +103,7 @@ class MainActivity : AppCompatActivity() {
             val ok = withContext(Dispatchers.IO) { covers.setCustom(rom, uri) }
             Toast.makeText(this@MainActivity, if (ok) "Capa atualizada" else "Não consegui usar essa imagem", Toast.LENGTH_SHORT).show()
             adapter.notifyDataSetChanged()
+            updateTitle()
         }
     }
 
@@ -86,15 +113,16 @@ class MainActivity : AppCompatActivity() {
         d = resources.displayMetrics.density
         library = RomLibrary(this)
         covers = CoverManager(this)
+        titles = TitleStore(this)
 
         sounds = SoundPool.Builder().setMaxStreams(2).setAudioAttributes(
             AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
         ).build()
         tickId = sounds.load(this, R.raw.tick, 1)
 
-        val root = LinearLayout(this).apply {
+        aurora = AuroraView(this)
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.parseColor("#1C212B"), Color.parseColor("#090A0E")))
             setPadding(0, dp(18), 0, dp(12))
         }
 
@@ -104,26 +132,33 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(24), 0, dp(24), 0)
         }
-        top.addView(ImageView(this).apply { setImageResource(R.mipmap.ic_launcher) }, LinearLayout.LayoutParams(dp(38), dp(38)))
+        top.addView(ImageView(this).apply { setImageResource(R.mipmap.ic_launcher) }, LinearLayout.LayoutParams(dp(40), dp(40)))
         top.addView(TextView(this).apply {
-            text = "RetroDroid"; textSize = 22f; setTextColor(Color.WHITE)
-            setTypeface(typeface, Typeface.BOLD); setPadding(dp(12), 0, 0, 0)
+            text = "RetroDroid"; textSize = 24f; setTextColor(Color.WHITE)
+            setTypeface(typeface, Typeface.BOLD); letterSpacing = 0.04f; setPadding(dp(12), 0, 0, 0)
+            setShadowLayer(12f, 0f, 2f, Color.parseColor("#66000000"))
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        countText = TextView(this).apply { textSize = 14f; setTextColor(Color.parseColor("#9AA3B2")) }
+        countText = TextView(this).apply {
+            textSize = 13f; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#33FFFFFF")); cornerRadius = dp(20).toFloat() }
+            visibility = View.GONE
+        }
         top.addView(countText)
-        root.addView(top)
+        content.addView(top)
 
         // carrossel
         lm = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
         rv = RecyclerView(this).apply {
             layoutManager = lm
             clipToPadding = false
+            clipChildren = false
             overScrollMode = View.OVER_SCROLL_NEVER
         }
         adapter = CardAdapter()
         rv.adapter = adapter
         snap = LinearSnapHelper().also { it.attachToRecyclerView(rv) }
-        root.addView(rv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        content.addView(rv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         rv.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(r: RecyclerView, dx: Int, dy: Int) { updateCards(true) }
@@ -134,24 +169,50 @@ class MainActivity : AppCompatActivity() {
 
         // título do jogo selecionado
         gameTitle = TextView(this).apply {
-            textSize = 22f; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD)
+            textSize = 24f; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(dp(24), 0, dp(24), 0)
+            setShadowLayer(14f, 0f, 3f, Color.parseColor("#88000000"))
         }
         gameSub = TextView(this).apply {
-            textSize = 14f; setTextColor(Color.parseColor("#9AA3B2")); gravity = Gravity.CENTER
+            textSize = 14f; setTextColor(Color.parseColor("#D0D6E2")); gravity = Gravity.CENTER
         }
-        root.addView(gameTitle)
-        root.addView(gameSub)
-
-        emptyHint = TextView(this).apply {
+        content.addView(gameTitle)
+        content.addView(gameSub)
+        content.addView(TextView(this).apply {
             text = "Deslize para escolher  •  toque no jogo do meio para jogar  •  segure para opções"
-            textSize = 12f; setTextColor(Color.parseColor("#6E7787")); gravity = Gravity.CENTER
+            textSize = 12f; setTextColor(Color.parseColor("#8E97A8")); gravity = Gravity.CENTER
             setPadding(0, dp(10), 0, 0)
-        }
-        root.addView(emptyHint)
+        })
 
+        val root = FrameLayout(this)
+        root.addView(aurora, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
+        rv.post { showCrashIfAny() }
+    }
+
+    /** Se o app fechou de repente da última vez, mostra o erro (dá pra copiar e mandar pro Claude). */
+    private fun showCrashIfAny() {
+        val text = CrashReport.pending(this) ?: return
+        val tv = TextView(this).apply {
+            this.text = text.take(6000)
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("O app fechou por causa de um erro")
+            .setView(ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("Copiar") { _, _ ->
+                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                    .setPrimaryClip(ClipData.newPlainText("erro", text))
+                CrashReport.clear(this)
+                Toast.makeText(this, "Copiado! Cole no chat.", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("Fechar") { _, _ -> CrashReport.clear(this) }
+            .show()
     }
 
     private val cardH get() = (rv.height * 0.80f).toInt()
@@ -177,12 +238,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun refresh() {
         roms = library.list()
-        countText.text = if (roms.isEmpty()) "" else "${roms.size} jogo(s)"
+        countText.visibility = if (roms.isEmpty()) View.GONE else View.VISIBLE
+        countText.text = "${roms.size} jogo(s)"
         adapter.notifyDataSetChanged()
         val first = if (roms.isNotEmpty()) 1 else 0
         rv.post {
             if (centerPos < 0 || centerPos > roms.size) lm.scrollToPositionWithOffset(first, (rv.width - cardW) / 2 - rv.paddingLeft)
             updateCards(false)
+            if (firstShow) {
+                firstShow = false
+                rv.alpha = 0f
+                rv.translationY = dp(36).toFloat()
+                rv.animate().alpha(1f).translationY(0f).setDuration(450).start()
+            }
         }
         fetchMissingCovers()
     }
@@ -194,7 +262,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             for (rom in todo) {
                 val sys = RomDetector.detect(rom) ?: continue
-                if (covers.fetchOnline(rom, sys)) withContext(Dispatchers.Main) { adapter.notifyDataSetChanged() }
+                if (covers.fetchOnline(rom, sys)) withContext(Dispatchers.Main) { adapter.notifyDataSetChanged(); updateTitle() }
             }
         }
     }
@@ -208,10 +276,10 @@ class MainActivity : AppCompatActivity() {
             val v = rv.getChildAt(i)
             val dist = abs((v.left + v.right) / 2f - mid)
             val t = min(dist / pitch, 1f)
-            val s = 1.10f - 0.24f * t
+            val s = 1.12f - 0.26f * t
             v.scaleX = s; v.scaleY = s
-            v.alpha = 1f - 0.45f * t
-            v.elevation = (1f - t) * dp(12)
+            v.alpha = 1f - 0.50f * t
+            v.elevation = (1f - t) * dp(16)
             (v.tag as? CardHolder)?.border?.alpha = if (t < 0.25f) 1f - t * 4f else 0f
         }
         val sv = snap.findSnapView(lm) ?: return
@@ -228,14 +296,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateTitle() {
-        if (centerPos <= 0 || centerPos > roms.size) {
+        val isGame = centerPos in 1..roms.size
+        if (!isGame) {
             gameTitle.text = if (roms.isEmpty()) "Nenhum jogo ainda" else "Adicionar ROMs"
-            gameSub.text = if (roms.isEmpty()) "Toque no card + para escolher seus arquivos" else ".sfc  .smc  .gen  .md  .bin  .nes  .z64  .n64  .v64"
+            gameSub.text = if (roms.isEmpty()) "Toque no card + para escolher seus arquivos" else ".sfc .smc .gen .md .bin .nes .z64 .n64 .v64"
+            aurora.setAccent(defaultAccent)
         } else {
             val rom = roms[centerPos - 1]
-            gameTitle.text = rom.nameWithoutExtension
+            gameTitle.text = titleOf(rom)
             gameSub.text = RomDetector.detect(rom)?.label ?: ""
+            aurora.setAccent(accentOf(rom))
         }
+        gameTitle.alpha = 0f
+        gameTitle.translationY = dp(8).toFloat()
+        gameTitle.animate().alpha(1f).translationY(0f).setDuration(200).start()
     }
 
     // ===================================================================== ações
@@ -246,24 +320,48 @@ class MainActivity : AppCompatActivity() {
     private fun options(rom: File) {
         val sys = RomDetector.detect(rom)
         AlertDialog.Builder(this)
-            .setTitle(rom.nameWithoutExtension)
-            .setItems(arrayOf("Escolher capa da galeria", "Buscar capa na internet", "Remover ROM e saves")) { _, which ->
+            .setTitle(titleOf(rom))
+            .setItems(arrayOf(
+                "Editar nome", "Escolher capa da galeria", "Buscar capa na internet",
+                "Restaurar nome e capa originais", "Remover ROM e saves"
+            )) { _, which ->
                 when (which) {
-                    0 -> { coverTarget = rom; coverPicker.launch("image/*") }
-                    1 -> {
-                        if (sys != null) lifecycleScope.launch {
-                            covers.clear(rom)
-                            val ok = withContext(Dispatchers.IO) { covers.fetchOnline(rom, sys) }
-                            Toast.makeText(this@MainActivity, if (ok) "Capa encontrada!" else "Capa não encontrada (o nome do arquivo precisa ser igual ao nome oficial do jogo)", Toast.LENGTH_LONG).show()
-                            adapter.notifyDataSetChanged()
-                        }
+                    0 -> editName(rom)
+                    1 -> { coverTarget = rom; coverPicker.launch("image/*") }
+                    2 -> if (sys != null) lifecycleScope.launch {
+                        covers.clear(rom)
+                        val ok = withContext(Dispatchers.IO) { covers.fetchOnline(rom, sys) }
+                        Toast.makeText(this@MainActivity, if (ok) "Capa encontrada!" else "Capa não encontrada (o nome do arquivo precisa ser igual ao nome oficial do jogo)", Toast.LENGTH_LONG).show()
+                        adapter.notifyDataSetChanged(); updateTitle()
                     }
-                    2 -> AlertDialog.Builder(this)
-                        .setMessage("Remover \"${rom.nameWithoutExtension}\" e todos os saves dela?")
-                        .setPositiveButton("Remover") { _, _ -> library.delete(rom); refresh() }
+                    3 -> { titles.clear(rom); covers.clear(rom); adapter.notifyDataSetChanged(); updateTitle(); fetchMissingCovers() }
+                    4 -> AlertDialog.Builder(this)
+                        .setMessage("Remover \"${titleOf(rom)}\" e todos os saves dela?")
+                        .setPositiveButton("Remover") { _, _ -> titles.clear(rom); library.delete(rom); refresh() }
                         .setNegativeButton("Cancelar", null).show()
                 }
             }.show()
+    }
+
+    private fun editName(rom: File) {
+        val input = EditText(this).apply {
+            setText(titleOf(rom))
+            setSingleLine()
+            setSelection(text.length)
+        }
+        val box = FrameLayout(this).apply {
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Nome do jogo")
+            .setView(box)
+            .setPositiveButton("Salvar") { _, _ ->
+                titles.set(rom, input.text.toString())
+                adapter.notifyDataSetChanged(); updateTitle()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
     }
 
     // ===================================================================== adapter
@@ -280,7 +378,7 @@ class MainActivity : AppCompatActivity() {
             val card = FrameLayout(ctx).apply {
                 clipToOutline = true
                 outlineProvider = object : ViewOutlineProvider() {
-                    override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(20).toFloat()) }
+                    override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(24).toFloat()) }
                 }
             }
             val match = { FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) }
@@ -290,20 +388,19 @@ class MainActivity : AppCompatActivity() {
 
             val plus = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-                addView(TextView(ctx).apply { text = "+"; textSize = 72f; setTextColor(Color.parseColor("#B8C0CF")); gravity = Gravity.CENTER })
-                addView(TextView(ctx).apply { text = "Adicionar ROMs"; textSize = 15f; setTextColor(Color.parseColor("#9AA3B2")); gravity = Gravity.CENTER })
+                addView(TextView(ctx).apply { text = "+"; textSize = 80f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
+                addView(TextView(ctx).apply { text = "Adicionar ROMs"; textSize = 16f; setTextColor(Color.parseColor("#D0D6E2")); gravity = Gravity.CENTER })
             }
             card.addView(plus, match())
 
             val badge = TextView(ctx).apply {
-                textSize = 11f; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD)
-                setPadding(dp(8), dp(3), dp(8), dp(3))
-                background = GradientDrawable().apply { setColor(Color.parseColor("#B0000000")); cornerRadius = dp(8).toFloat() }
+                textSize = 12f; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
             }
-            card.addView(badge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply { setMargins(dp(10), dp(10), 0, 0) })
+            card.addView(badge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
 
             val border = View(ctx).apply {
-                background = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(4), Color.WHITE); cornerRadius = dp(20).toFloat() }
+                background = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(4), Color.WHITE); cornerRadius = dp(24).toFloat() }
                 alpha = 0f
             }
             card.addView(border, match())
@@ -317,10 +414,13 @@ class MainActivity : AppCompatActivity() {
             h.card.layoutParams = RecyclerView.LayoutParams(cardW, cardH).apply { setMargins(dp(10), 0, dp(10), 0) }
 
             if (position == 0) {
-                h.card.setBackgroundColor(Color.parseColor("#262B37"))
+                h.card.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.parseColor("#3B3F63"), Color.parseColor("#1D2036")))
                 h.plus.visibility = View.VISIBLE
                 h.img.visibility = View.GONE
                 h.badge.visibility = View.GONE
+                (h.border.background as GradientDrawable).setStroke(dp(4), Color.WHITE)
+                h.card.outlineSpotShadowColor = defaultAccent
+                h.card.outlineAmbientShadowColor = defaultAccent
                 h.card.setOnClickListener {
                     if (position == centerPos) romPicker.launch(arrayOf("*/*")) else rv.smoothScrollToPosition(position)
                 }
@@ -331,12 +431,17 @@ class MainActivity : AppCompatActivity() {
 
             val rom = roms[position - 1]
             val sys = RomDetector.detect(rom)
-            h.card.setBackgroundColor(Color.parseColor("#20242E"))
+            val accent = accentOf(rom)
+            h.card.setBackgroundColor(Color.parseColor("#14161F"))
             h.plus.visibility = View.GONE
             h.img.visibility = View.VISIBLE
             h.badge.visibility = View.VISIBLE
             h.badge.text = sys?.badge ?: "?"
-            h.img.setImageBitmap(covers.load(rom) ?: covers.generated(rom))
+            h.badge.background = GradientDrawable().apply { setColor(systemColor(sys)); cornerRadius = dp(10).toFloat() }
+            (h.border.background as GradientDrawable).setStroke(dp(4), accent)
+            h.card.outlineSpotShadowColor = accent
+            h.card.outlineAmbientShadowColor = accent
+            h.img.setImageBitmap(covers.load(rom) ?: covers.generated(rom, titleOf(rom), sys))
             h.card.setOnClickListener {
                 if (position == centerPos) play(rom) else rv.smoothScrollToPosition(position)
             }

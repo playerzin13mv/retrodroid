@@ -12,3 +12,10 @@ O workflow descobre sozinho uma versão da LibretroDroid que existe no JitPack (
 
 ## Formatos
 .sfc .smc (SNES) • .gen .md .smd .bin (Mega Drive) • .nes (NES) • .z64 .n64 .v64 (Nintendo 64)
+
+## Novidades
+- Gravação de vídeo com áudio (pede permissão de microfone e de "captura de tela" só pra pegar o som do jogo).
+- Mini-controle do console no canto do vídeo (botão apertado = branco).
+- Launcher com fundo animado, capas/nomes personalizados.
+- Se o app fechar de repente, o erro aparece na próxima abertura (botão Copiar).
+- Configurações Avançadas → "Diagnóstico dos botões" mostra qual tecla cada botão da tela está enviando.

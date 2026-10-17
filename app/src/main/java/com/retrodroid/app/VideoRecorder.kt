@@ -4,12 +4,15 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioPlaybackCaptureConfiguration
+import android.media.AudioRecord
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.media.projection.MediaProjection
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
@@ -19,32 +22,57 @@ import android.view.PixelCopy
 import android.view.Surface
 import android.view.SurfaceView
 import java.io.File
+import java.nio.ByteBuffer
 
 /**
- * Grava só a imagem do jogo (a SurfaceView do emulador), então os controles na tela NÃO entram no vídeo.
- * No canto inferior esquerdo do vídeo desenha pequenos ícones dos botões que o jogador está apertando.
- * Ainda sem áudio do jogo.
+ * Grava só a imagem do jogo (a SurfaceView do emulador): os controles na tela NÃO entram no vídeo.
+ * No canto inferior esquerdo desenha um mini-controle do console, e o botão apertado fica branco.
+ * Se [projection] existir, grava também o áudio do jogo (captura de áudio interno do Android 10+).
  */
 class VideoRecorder(
     private val view: SurfaceView,
     private val context: Context,
-    private val hud: () -> List<Bitmap>
+    private val system: GameSystem,
+    private val pressed: () -> Set<String>,
+    private val projection: MediaProjection?
 ) {
-    private var codec: MediaCodec? = null
-    private var muxer: MediaMuxer? = null
-    private var surface: Surface? = null
-    private var track = -1
-    @Volatile private var muxerStarted = false
-    @Volatile private var running = false
+    var hasAudio = false
+        private set
 
-    private var drainThread: Thread? = null
+    // vídeo
+    private var vCodec: MediaCodec? = null
+    private var surface: Surface? = null
     private val captureThread = HandlerThread("rec-capture")
     private lateinit var handler: Handler
     private lateinit var frame: Bitmap
-    private lateinit var tmpFile: File
     private var w = 0
     private var h = 0
-    private val hudPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply { alpha = 215 }
+
+    // áudio
+    private var aCodec: MediaCodec? = null
+    private var audioRecord: AudioRecord? = null
+    private var audioThread: Thread? = null
+    private val sampleRate = 44100
+
+    // saída
+    private var muxer: MediaMuxer? = null
+    private lateinit var tmpFile: File
+    private val muxLock = Any()
+    private var muxerStarted = false
+    private var expectedTracks = 1
+    private var addedTracks = 0
+    private var baseUs = 0L
+    private var startedAt = 0L
+    private val lastPts = HashMap<Int, Long>()
+
+    private class Pending(val track: Int, val data: ByteArray, val pts: Long, val flags: Int)
+    private val pending = ArrayList<Pending>()
+
+    private var vDrain: Thread? = null
+    private var aDrain: Thread? = null
+    @Volatile private var running = false
+
+    private fun nowUs() = System.nanoTime() / 1000L
 
     fun start(): Boolean {
         val vw = view.width
@@ -56,31 +84,112 @@ class VideoRecorder(
         tmpFile = File(context.cacheDir, "rec_${System.currentTimeMillis()}.mp4")
 
         return try {
+            baseUs = nowUs()
+            startedAt = SystemClock.uptimeMillis()
+
             val fmt = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, 6_000_000)
                 setInteger(MediaFormat.KEY_FRAME_RATE, 30)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
-            val c = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            c.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            surface = c.createInputSurface()
-            c.start()
-            codec = c
+            val vc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            vc.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            surface = vc.createInputSurface()
+            vc.start()
+            vCodec = vc
+
+            if (projection != null) {
+                try { setupAudio(); hasAudio = true } catch (e: Exception) { hasAudio = false; releaseAudio() }
+            }
+            expectedTracks = if (hasAudio) 2 else 1
             muxer = MediaMuxer(tmpFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+
             running = true
-            drainThread = Thread { drain() }.also { it.start() }
+            vDrain = Thread { drain(vc) }.also { it.start() }
+            if (hasAudio) {
+                val ac = aCodec!!
+                aDrain = Thread { drain(ac) }.also { it.start() }
+                audioThread = Thread { audioLoop() }.also { it.start() }
+            }
             captureThread.start()
             handler = Handler(captureThread.looper)
             handler.post(captureTick)
             true
         } catch (e: Exception) {
             running = false
-            release()
+            releaseAll()
             false
         }
     }
 
+    // ------------------------------------------------------------ áudio
+    private fun setupAudio() {
+        val cfg = AudioPlaybackCaptureConfiguration.Builder(projection!!)
+            .addMatchingUsage(AudioAttributes.USAGE_GAME)
+            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+            .build()
+        val af = AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setSampleRate(sampleRate)
+            .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+            .build()
+        val minBuf = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+            .let { if (it <= 0) 16384 else it }
+        val ar = AudioRecord.Builder()
+            .setAudioPlaybackCaptureConfig(cfg)
+            .setAudioFormat(af)
+            .setBufferSizeInBytes(minBuf * 4)
+            .build()
+        if (ar.state != AudioRecord.STATE_INITIALIZED) throw IllegalStateException("AudioRecord não iniciou")
+        audioRecord = ar
+
+        val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 2).apply {
+            setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
+            setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
+        }
+        val ac = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        ac.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        ac.start()
+        aCodec = ac
+    }
+
+    private fun bytesToUs(bytes: Int): Long = bytes / 4L * 1_000_000L / sampleRate
+
+    private fun audioLoop() {
+        val ar = audioRecord ?: return
+        val ac = aCodec ?: return
+        val buf = ByteArray(4096)
+        var lastIn = 0L
+        try {
+            ar.startRecording()
+            while (running) {
+                val n = ar.read(buf, 0, buf.size)
+                if (n <= 0) continue
+                var off = 0
+                while (off < n && running) {
+                    val idx = ac.dequeueInputBuffer(10_000)
+                    if (idx < 0) continue
+                    val ib = ac.getInputBuffer(idx) ?: break
+                    ib.clear()
+                    val chunk = minOf(ib.remaining(), n - off)
+                    ib.put(buf, off, chunk)
+                    val pts = (nowUs() - baseUs - bytesToUs(n - off)).coerceAtLeast(0L)
+                    ac.queueInputBuffer(idx, 0, chunk, pts, 0)
+                    lastIn = pts
+                    off += chunk
+                }
+            }
+            val idx = ac.dequeueInputBuffer(100_000)
+            if (idx >= 0) ac.queueInputBuffer(idx, 0, 0, lastIn, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            ar.stop()
+        } catch (_: Exception) {
+        }
+    }
+
+    // ------------------------------------------------------------ vídeo (captura da SurfaceView)
     private val captureTick = object : Runnable {
         override fun run() {
             if (!running) return
@@ -105,7 +214,8 @@ class VideoRecorder(
             val c: Canvas = s.lockHardwareCanvas()
             try {
                 c.drawBitmap(frame, 0f, 0f, null)
-                drawHud(c)
+                val cw = h * 0.42f
+                ControllerHud.draw(c, system, pressed(), h * 0.03f, h - h * 0.03f - cw * 64f / 120f, cw)
             } finally {
                 s.unlockCanvasAndPost(c)
             }
@@ -113,40 +223,69 @@ class VideoRecorder(
         }
     }
 
-    /** Ícones pequenos dos botões apertados, no canto inferior esquerdo. */
-    private fun drawHud(c: Canvas) {
-        val list = hud()
-        if (list.isEmpty()) return
-        val size = h * 0.085f
-        val gap = h * 0.012f
-        var x = h * 0.03f
-        val y = h - size - h * 0.03f
-        for (b in list) {
-            val bw = size * b.width / b.height
-            c.drawBitmap(b, null, RectF(x, y, x + bw, y + size), hudPaint)
-            x += bw + gap
-        }
+    // ------------------------------------------------------------ muxer
+    private fun addTrack(format: MediaFormat): Int = synchronized(muxLock) {
+        val m = muxer ?: return -1
+        val t = m.addTrack(format)
+        addedTracks++
+        if (addedTracks >= expectedTracks) startMuxerLocked()
+        t
     }
 
-    private fun drain() {
-        val c = codec ?: return
+    private fun startMuxerLocked() {
+        val m = muxer ?: return
+        if (muxerStarted) return
+        m.start()
+        muxerStarted = true
+        for (p in pending) writeNow(p.track, p.data, p.pts, p.flags)
+        pending.clear()
+    }
+
+    private fun writeNow(track: Int, data: ByteArray, pts: Long, flags: Int) {
+        val bi = MediaCodec.BufferInfo()
+        bi.set(0, data.size, pts, flags)
+        muxer?.writeSampleData(track, ByteBuffer.wrap(data), bi)
+    }
+
+    private fun writeSample(track: Int, buf: ByteBuffer, info: MediaCodec.BufferInfo) {
+      synchronized(muxLock) {
+        var p = (info.presentationTimeUs - baseUs).coerceAtLeast(0L)
+        val last = lastPts[track] ?: -1L
+        if (p <= last) p = last + 1
+        lastPts[track] = p
+
+        buf.position(info.offset)
+        buf.limit(info.offset + info.size)
+        val arr = ByteArray(info.size)
+        buf.get(arr)
+
+        // se o áudio demorar demais pra começar, segue só com o que já existe
+        if (!muxerStarted && addedTracks >= 1 && SystemClock.uptimeMillis() - startedAt > 5000) startMuxerLocked()
+
+        if (muxerStarted) {
+            try { writeNow(track, arr, p, info.flags) } catch (_: Exception) {}
+        } else if (pending.size < 900) {
+            pending.add(Pending(track, arr, p, info.flags))
+        } else {
+            // fila cheia: descarta
+        }
+      }
+    }
+
+    private fun drain(codec: MediaCodec) {
         val info = MediaCodec.BufferInfo()
+        var track = -1
         try {
             while (true) {
-                val idx = c.dequeueOutputBuffer(info, 10_000)
+                val idx = codec.dequeueOutputBuffer(info, 10_000)
                 if (idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    track = muxer!!.addTrack(c.outputFormat)
-                    muxer!!.start()
-                    muxerStarted = true
+                    track = addTrack(codec.outputFormat)
                 } else if (idx >= 0) {
-                    val buf = c.getOutputBuffer(idx)!!
-                    if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) info.size = 0
-                    if (info.size > 0 && muxerStarted) {
-                        buf.position(info.offset)
-                        buf.limit(info.offset + info.size)
-                        muxer!!.writeSampleData(track, buf, info)
-                    }
-                    c.releaseOutputBuffer(idx, false)
+                    val buf = codec.getOutputBuffer(idx)
+                    if (buf != null && info.size > 0 && track >= 0 &&
+                        (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                    ) writeSample(track, buf, info)
+                    codec.releaseOutputBuffer(idx, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
                 }
             }
@@ -154,25 +293,40 @@ class VideoRecorder(
         }
     }
 
+    // ------------------------------------------------------------ parar e salvar
     /** Para a gravação e salva em Filmes/RetroDroid. Chame fora da thread principal. Retorna true se salvou. */
     fun stopAndSave(): Boolean {
         running = false
         try { handler.removeCallbacksAndMessages(null); captureThread.quitSafely() } catch (_: Exception) {}
-        try { codec?.signalEndOfInputStream() } catch (_: Exception) {}
-        try { drainThread?.join(4000) } catch (_: Exception) {}
+        try { vCodec?.signalEndOfInputStream() } catch (_: Exception) {}
+        try { audioRecord?.stop() } catch (_: Exception) {}
+        try { audioThread?.join(3000) } catch (_: Exception) {}
+        try { vDrain?.join(4000) } catch (_: Exception) {}
+        try { aDrain?.join(4000) } catch (_: Exception) {}
+        synchronized(muxLock) {
+            if (!muxerStarted && addedTracks >= 1) startMuxerLocked() else Unit
+        }
         val ok = muxerStarted
-        release()
+        releaseAll()
         if (!ok) { tmpFile.delete(); return false }
         return saveToGallery(tmpFile)
     }
 
-    private fun release() {
-        try { codec?.stop() } catch (_: Exception) {}
-        try { codec?.release() } catch (_: Exception) {}
+    private fun releaseAudio() {
+        try { audioRecord?.release() } catch (_: Exception) {}
+        try { aCodec?.stop() } catch (_: Exception) {}
+        try { aCodec?.release() } catch (_: Exception) {}
+        audioRecord = null; aCodec = null
+    }
+
+    private fun releaseAll() {
+        releaseAudio()
+        try { vCodec?.stop() } catch (_: Exception) {}
+        try { vCodec?.release() } catch (_: Exception) {}
         try { if (muxerStarted) muxer?.stop() } catch (_: Exception) {}
         try { muxer?.release() } catch (_: Exception) {}
         try { surface?.release() } catch (_: Exception) {}
-        codec = null; muxer = null; surface = null
+        vCodec = null; muxer = null; surface = null
     }
 
     private fun saveToGallery(file: File): Boolean = try {
