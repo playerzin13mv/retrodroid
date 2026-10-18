@@ -6,6 +6,7 @@ Emulador Android (Kotlin + LibretroDroid) para SNES, Mega Drive, NES e Nintendo 
 1. Suba TODOS os arquivos desta pasta (inclusive `.github/`) para um repositório no GitHub.
 2. **Actions → Build APK → Run workflow** (ou dê push).
 3. Quando ficar verde, baixe o artefato **RetroDroid-apk**, descompacte e instale o `.apk`.
+4. Você também pode baixar pelo site: https://playerzin13mv.github.io/retrodroid/
 
 O workflow descobre sozinho uma versão da LibretroDroid que existe no JitPack (veja o passo
 "Descobrir versão..." no log) e baixa os cores: Snes9x, Genesis Plus GX, FCEUmm e Mupen64Plus-Next.
