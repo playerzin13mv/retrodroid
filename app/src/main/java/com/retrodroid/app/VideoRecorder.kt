@@ -50,6 +50,19 @@ class VideoRecorder(
     var audioError: String? = null
         private set
 
+    /** true se, em algum momento, o áudio do jogo foi realmente captado (não só silêncio). */
+    @Volatile var heardSound = false
+        private set
+
+    @Volatile private var peak = 0
+
+    /** Maior volume captado desde a última chamada (0 a 32767). */
+    fun takePeak(): Int {
+        val p = peak
+        peak = 0
+        return p
+    }
+
     /** Quantos pedaços de áudio entraram no vídeo (0 = ficou mudo). */
     @Volatile var audioSamples = 0
         private set
@@ -73,7 +86,7 @@ class VideoRecorder(
     private var aCodec: MediaCodec? = null
     private var audioRecord: AudioRecord? = null
     private var audioThread: Thread? = null
-    private val sampleRate = 44100
+    private val sampleRate = 48000
 
     // saída
     private var muxer: MediaMuxer? = null
@@ -183,21 +196,46 @@ class VideoRecorder(
         val ar = audioRecord ?: return
         val ac = aCodec ?: return
         val buf = ByteArray(4096)
+        val silence = ByteArray(3840)
         var lastIn = 0L
         try {
             ar.startRecording()
+            if (ar.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                audioError = "não começou a gravar (estado " + ar.recordingState + ")"
+            }
             while (running) {
                 val n = ar.read(buf, 0, buf.size)
-                if (n <= 0) continue
+                val data: ByteArray
+                val len: Int
+                if (n > 0) {
+                    data = buf
+                    len = n
+                    var p = 0
+                    var i = 0
+                    while (i + 1 < n) {
+                        val sample = ((buf[i + 1].toInt() shl 8) or (buf[i].toInt() and 0xFF)).toShort().toInt()
+                        val a = if (sample < 0) -sample else sample
+                        if (a > p) p = a
+                        i += 2
+                    }
+                    if (p > peak) peak = p
+                    if (p > 300) heardSound = true
+                } else {
+                    if (n < 0) audioError = "leitura falhou (código " + n + ")"
+                    // sem dados: alimenta silêncio no ritmo real, pra o vídeo não ficar esperando o áudio
+                    try { Thread.sleep(20) } catch (_: InterruptedException) {}
+                    data = silence
+                    len = silence.size
+                }
                 var off = 0
-                while (off < n && running) {
+                while (off < len && running) {
                     val idx = ac.dequeueInputBuffer(10_000)
                     if (idx < 0) continue
                     val ib = ac.getInputBuffer(idx) ?: break
                     ib.clear()
-                    val chunk = minOf(ib.remaining(), n - off)
-                    ib.put(buf, off, chunk)
-                    val pts = (nowUs() - baseUs - bytesToUs(n - off)).coerceAtLeast(0L)
+                    val chunk = minOf(ib.remaining(), len - off)
+                    ib.put(data, off, chunk)
+                    val pts = (nowUs() - baseUs - bytesToUs(len - off)).coerceAtLeast(0L)
                     ac.queueInputBuffer(idx, 0, chunk, pts, 0)
                     lastIn = pts
                     off += chunk
@@ -206,7 +244,8 @@ class VideoRecorder(
             val idx = ac.dequeueInputBuffer(100_000)
             if (idx >= 0) ac.queueInputBuffer(idx, 0, 0, lastIn, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
             ar.stop()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            audioError = e.javaClass.simpleName + ": " + (e.message ?: "")
         }
     }
 

@@ -126,6 +126,7 @@ class GameActivity : AppCompatActivity() {
                 saveRAMState = if (sramFile.exists()) sramFile.readBytes() else null
             }
             applyShader(data)
+            applyAudioMode(data)
             GLRetroView(this, data)
         } catch (e: Exception) {
             return fail(trf("Erro ao iniciar: %s", e.message ?: ""))
@@ -282,6 +283,15 @@ class GameActivity : AppCompatActivity() {
         }
     }
 
+    /** Desliga o áudio de baixa latência exclusiva (que o Android não deixa gravar). Usa reflexão: se não existir, ignora. */
+    private fun applyAudioMode(data: GLRetroViewData) {
+        try {
+            val m = data.javaClass.methods.firstOrNull { it.name == "setPreferLowLatencyAudio" }
+            m?.invoke(data, !settings.recAudioCompat)
+        } catch (_: Throwable) {
+        }
+    }
+
     /** Se "Trocar A↔B e X↔Y" estiver ligado, troca as teclas (para controles com a posição invertida). */
     private fun swapKey(code: Int): Int {
         if (!settings.swapAB) return code
@@ -298,6 +308,15 @@ class GameActivity : AppCompatActivity() {
         override fun run() {
             lastFps = frames
             if (settings.showFps) fpsText.text = "FPS: $frames"
+            recorder?.let { r ->
+                val peak = r.takePeak()
+                recText.text = when {
+                    !r.hasAudio -> "● REC (sem áudio)"
+                    r.audioError != null -> "● REC ⚠ " + r.audioError
+                    peak > 300 -> "● REC 🔊"
+                    else -> "● REC 🔇"
+                }
+            }
             frames = 0
             ui.postDelayed(this, 1000)
         }
@@ -677,7 +696,7 @@ class GameActivity : AppCompatActivity() {
             val ok = r.stopAndSave()
             RecordService.stop(app)
             ui.post {
-                val msg = if (ok) trf("Vídeo salvo em Filmes/RetroDroid (áudio: %s)", if (r.audioSamples > 0) tr("sim") else tr("não"))
+                val msg = if (ok) trf("Vídeo salvo em Filmes/RetroDroid (áudio: %s)", if (r.heardSound) tr("sim") else tr("mudo"))
                 else tr("Falha ao salvar o vídeo")
                 Toast.makeText(app, msg, Toast.LENGTH_LONG).show()
             }

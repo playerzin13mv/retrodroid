@@ -87,6 +87,7 @@ class MainActivity : AppCompatActivity() {
 
     private val romPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isEmpty()) return@registerForActivityResult
+        Toast.makeText(this, tr("Importando… (arquivos .zip e .7z podem demorar)"), Toast.LENGTH_LONG).show()
         lifecycleScope.launch {
             val results = withContext(Dispatchers.IO) { uris.map { library.import(it) } }
             val ok = results.count { it != null }
@@ -368,7 +369,7 @@ class MainActivity : AppCompatActivity() {
         val isGame = centerPos in 1..roms.size
         if (!isGame) {
             gameTitle.text = if (roms.isEmpty()) tr("Nenhum jogo ainda") else tr("Adicionar ROMs")
-            gameSub.text = if (roms.isEmpty()) tr("Toque no card + para escolher seus arquivos") else ".sfc .smc .gen .md .bin .nes .z64 .n64 .v64 .nds .3ds .cue .iso .chd"
+            gameSub.text = if (roms.isEmpty()) tr("Toque no card + para escolher seus arquivos") else ".sfc .smc .gen .md .bin .nes .z64 .n64 .v64 .nds .3ds .cue .iso .chd .zip .7z"
             aurora.setAccent(defaultAccent)
         } else {
             val rom = roms[centerPos - 1]

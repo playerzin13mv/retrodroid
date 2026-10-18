@@ -30,13 +30,25 @@ android {
 
     // Obrigatório: os cores (.so) precisam ser extraídos pra pasta nativa
     // para o LibretroDroid conseguir carregá-los pelo caminho do arquivo.
-    packaging { jniLibs { useLegacyPackaging = true } }
+    packaging {
+        jniLibs { useLegacyPackaging = true }
+        resources {
+            excludes += setOf(
+                "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/DEPENDENCIES",
+                "META-INF/INDEX.LIST", "META-INF/AL2.0", "META-INF/LGPL2.1"
+            )
+        }
+    }
 }
 
 dependencies {
     // O workflow descobre sozinho uma versão que existe no JitPack e passa em LIBRETRO_DEP.
     implementation(System.getenv("LIBRETRO_DEP") ?: "com.github.swordfish90:libretrodroid:0.13.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+
+    // ler .zip (nativo) e .7z (LZMA)
+    implementation("org.apache.commons:commons-compress:1.26.2")
+    implementation("org.tukaani:xz:1.9")
 
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.core:core-ktx:1.13.1")

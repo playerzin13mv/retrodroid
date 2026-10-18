@@ -26,6 +26,11 @@ class Settings(context: Context) {
         get() = p.getBoolean("recControls", false)
         set(v) = p.edit().putBoolean("recControls", v).apply()
 
+    /** Áudio em modo que o Android consegue gravar (um pouco mais de atraso). */
+    var recAudioCompat: Boolean
+        get() = p.getBoolean("recAudioCompat", true)
+        set(v) = p.edit().putBoolean("recAudioCompat", v).apply()
+
     // ---- exibição
     /** true = imagem suavizada (interpolação); false = pixels nítidos. */
     var interpolation: Boolean

@@ -39,7 +39,8 @@ object SettingsUi {
             addView(switchRow(ctx, tr("Mostrar os botões apertados (mini-controle)"), s.recInputs) { s.recInputs = it })
             addView(switchRow(ctx, tr("Mostrar o FPS no vídeo"), s.recFps) { s.recFps = it })
             addView(switchRow(ctx, tr("Mostrar os controles da tela no vídeo"), s.recControls) { s.recControls = it })
-            addView(note(ctx, tr("O botão de menu nunca aparece no vídeo.")))
+            addView(switchRow(ctx, tr("Áudio compatível com a gravação (um pouco mais de atraso)"), s.recAudioCompat) { s.recAudioCompat = it })
+            addView(note(ctx, tr("O botão de menu nunca aparece no vídeo. A opção de áudio vale na próxima vez que você abrir um jogo.")))
         }
     }
 
