@@ -12,7 +12,7 @@ class RomLibrary(private val context: Context) {
 
     fun list(): List<File> =
         (romsDir.listFiles() ?: emptyArray())
-            .filter { it.isFile && it.extension.lowercase() in RomDetector.supportedExtensions }
+            .filter { it.isFile && RomDetector.detect(it) != null }
             .sortedBy { it.name.lowercase() }
 
     /** Retorna o arquivo importado, ou null se o formato não for suportado. */
@@ -23,10 +23,25 @@ class RomLibrary(private val context: Context) {
             dest.outputStream().use { out -> input.copyTo(out) }
         } ?: return null
         if (RomDetector.detect(dest) == null) {
+            // .bin sem cabeçalho de Mega Drive é a trilha de um CD (fica junto do .cue): guarda e não lista
+            if (dest.extension.lowercase() == "bin") return dest
             dest.delete()
             return null
         }
         return dest
+    }
+
+    /** Copia BIOS/firmware escolhido pelo jogador para a pasta "system" dos cores (mantém o nome do arquivo). */
+    fun importBios(uri: Uri): Boolean {
+        val name = displayName(uri) ?: return false
+        val dir = File(context.filesDir, "system").apply { mkdirs() }
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                File(dir, name.replace('/', '_')).outputStream().use { input.copyTo(it) }
+            } != null
+        } catch (e: Exception) {
+            false
+        }
     }
 
     fun delete(rom: File) {

@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -40,12 +43,32 @@ jobs:
           mkdir -p app/src/main/jniLibs/arm64-v8a
           cd app/src/main/jniLibs/arm64-v8a
           BASE=https://buildbot.libretro.com/nightly/android/latest/arm64-v8a
+
+          # cores principais (se faltar algum, o build falha de propósito)
           for core in snes9x genesis_plus_gx fceumm mupen64plus_next_gles3; do
             curl -fL -o "$core.zip" "$BASE/${core}_libretro_android.so.zip"
-            unzip -o "$core.zip"
+            unzip -o -q "$core.zip"
             mv "${core}_libretro_android.so" "lib${core}_libretro_android.so"
             rm "$core.zip"
           done
+
+          # cores opcionais (DS, 3DS, Saturn): tenta cada candidato; se nenhum existir, só avisa
+          fetch() {
+            out="$1"; shift
+            for c in "$@"; do
+              if curl -fsL -o tmp.zip "$BASE/${c}_libretro_android.so.zip"; then
+                unzip -o -q tmp.zip && mv "${c}_libretro_android.so" "lib${out}.so" && rm -f tmp.zip
+                echo "OK: $out <- $c"
+                return 0
+              fi
+              rm -f tmp.zip
+            done
+            echo "AVISO: nenhum core encontrado para $out"
+            return 0
+          }
+          fetch ds_core melonds melondsds desmume
+          fetch 3ds_core citra
+          fetch saturn_core yabasanshiro yabause mednafen_saturn
           ls -la
 
       - uses: gradle/actions/setup-gradle@v4
@@ -59,3 +82,16 @@ jobs:
         with:
           name: RetroDroid-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Publicar o APK na release "latest"
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          cp "$APK" RetroDroid.apk
+          gh release delete latest --cleanup-tag -y || true
+          gh release create latest RetroDroid.apk \
+            --title "RetroDroid (versão mais recente)" \
+            --notes "APK gerado automaticamente a cada atualização do código." \
+            --latest

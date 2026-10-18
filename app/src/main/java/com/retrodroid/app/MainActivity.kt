@@ -43,6 +43,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var library: RomLibrary
     private lateinit var covers: CoverManager
     private lateinit var titles: TitleStore
+    private lateinit var settings: Settings
     private lateinit var aurora: AuroraView
     private lateinit var rv: RecyclerView
     private lateinit var lm: LinearLayoutManager
@@ -77,6 +78,9 @@ class MainActivity : AppCompatActivity() {
             GameSystem.MEGADRIVE -> "#2F7BFF"
             GameSystem.NES -> "#FF4D4D"
             GameSystem.N64 -> "#1FBF7A"
+            GameSystem.DS -> "#8E9AAF"
+            GameSystem.N3DS -> "#E0457B"
+            GameSystem.SATURN -> "#00B8D9"
             null -> "#555555"
         }
     )
@@ -88,8 +92,8 @@ class MainActivity : AppCompatActivity() {
             val ok = results.count { it != null }
             val bad = results.size - ok
             val msg = buildString {
-                if (ok > 0) append("$ok ROM(s) adicionada(s)")
-                if (bad > 0) { if (isNotEmpty()) append(" • "); append("$bad formato(s) não suportado(s)") }
+                if (ok > 0) append(trf("%d ROM(s) adicionada(s)", ok))
+                if (bad > 0) { if (isNotEmpty()) append(" • "); append(trf("%d formato(s) não suportado(s)", bad)) }
             }
             Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
             refresh()
@@ -101,9 +105,17 @@ class MainActivity : AppCompatActivity() {
         if (uri == null) return@registerForActivityResult
         lifecycleScope.launch {
             val ok = withContext(Dispatchers.IO) { covers.setCustom(rom, uri) }
-            Toast.makeText(this@MainActivity, if (ok) "Capa atualizada" else "Não consegui usar essa imagem", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this@MainActivity, if (ok) tr("Capa atualizada") else tr("Não consegui usar essa imagem"), Toast.LENGTH_SHORT).show()
             adapter.notifyDataSetChanged()
             updateTitle()
+        }
+    }
+
+    private val biosPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) return@registerForActivityResult
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) { uris.count { library.importBios(it) } }
+            Toast.makeText(this@MainActivity, trf("%d arquivo(s) de BIOS importado(s)", ok), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -114,6 +126,7 @@ class MainActivity : AppCompatActivity() {
         library = RomLibrary(this)
         covers = CoverManager(this)
         titles = TitleStore(this)
+        settings = Settings(this)
 
         sounds = SoundPool.Builder().setMaxStreams(2).setAudioAttributes(
             AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
@@ -138,6 +151,11 @@ class MainActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD); letterSpacing = 0.04f; setPadding(dp(12), 0, 0, 0)
             setShadowLayer(12f, 0f, 2f, Color.parseColor("#66000000"))
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(TextView(this).apply {
+            text = "⚙"; textSize = 22f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            background = GradientDrawable().apply { setColor(Color.parseColor("#33FFFFFF")); shape = GradientDrawable.OVAL }
+            setOnClickListener { showSettings() }
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(12) })
         countText = TextView(this).apply {
             textSize = 13f; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD)
             setPadding(dp(14), dp(6), dp(14), dp(6))
@@ -180,7 +198,7 @@ class MainActivity : AppCompatActivity() {
         content.addView(gameTitle)
         content.addView(gameSub)
         content.addView(TextView(this).apply {
-            text = "Deslize para escolher  •  toque no jogo do meio para jogar  •  segure para opções"
+            text = tr("Deslize para escolher  •  toque no jogo do meio para jogar  •  segure para opções")
             textSize = 12f; setTextColor(Color.parseColor("#8E97A8")); gravity = Gravity.CENTER
             setPadding(0, dp(10), 0, 0)
         })
@@ -190,6 +208,57 @@ class MainActivity : AppCompatActivity() {
         root.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
         rv.post { showCrashIfAny() }
+    }
+
+    // ===================================================================== configurações
+    private fun showSettings() {
+        val items = arrayOf(
+            tr("Idioma"),
+            tr("Configurações de gravação"),
+            tr("Exibição (suavização e TV de tubo)"),
+            tr("Importar BIOS / firmware"),
+            tr("Sobre")
+        )
+        AlertDialog.Builder(this)
+            .setTitle(tr("Configurações"))
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> chooseLanguage()
+                    1 -> showView(tr("Configurações de gravação"), SettingsUi.recordingView(this, settings))
+                    2 -> showView(tr("Exibição (suavização e TV de tubo)"), SettingsUi.displayView(this, settings))
+                    3 -> {
+                        Toast.makeText(this, tr("Escolha os arquivos de BIOS (o Sega Saturn precisa de um)."), Toast.LENGTH_LONG).show()
+                        biosPicker.launch(arrayOf("*/*"))
+                    }
+                    4 -> AlertDialog.Builder(this)
+                        .setTitle("RetroDroid")
+                        .setMessage(tr("Versão beta. Feito com LibretroDroid e os cores Snes9x, Genesis Plus GX, FCEUmm, Mupen64Plus-Next, melonDS, Citra e Yabause/YabaSanshiro."))
+                        .setPositiveButton(tr("Fechar"), null)
+                        .show()
+                }
+            }
+            .show()
+    }
+
+    private fun showView(titleText: String, content: View) {
+        AlertDialog.Builder(this)
+            .setTitle(titleText)
+            .setView(content)
+            .setPositiveButton(tr("Fechar"), null)
+            .show()
+    }
+
+    private fun chooseLanguage() {
+        val names = I18n.options.map { it.second }.toTypedArray()
+        val current = I18n.options.indexOfFirst { it.first == I18n.lang }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle(tr("Idioma"))
+            .setSingleChoiceItems(names, current) { dlg, which ->
+                I18n.save(this, I18n.options[which].first)
+                dlg.dismiss()
+                recreate()
+            }
+            .show()
     }
 
     /** Se o app fechou de repente da última vez, mostra o erro (dá pra copiar e mandar pro Claude). */
@@ -203,15 +272,15 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), dp(8), dp(16), dp(8))
         }
         AlertDialog.Builder(this)
-            .setTitle("O app fechou por causa de um erro")
+            .setTitle(tr("O app fechou por causa de um erro"))
             .setView(ScrollView(this).apply { addView(tv) })
-            .setPositiveButton("Copiar") { _, _ ->
+            .setPositiveButton(tr("Copiar")) { _, _ ->
                 (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
                     .setPrimaryClip(ClipData.newPlainText("erro", text))
                 CrashReport.clear(this)
-                Toast.makeText(this, "Copiado! Cole no chat.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, tr("Copiado! Cole no chat."), Toast.LENGTH_LONG).show()
             }
-            .setNegativeButton("Fechar") { _, _ -> CrashReport.clear(this) }
+            .setNegativeButton(tr("Fechar")) { _, _ -> CrashReport.clear(this) }
             .show()
     }
 
@@ -239,7 +308,7 @@ class MainActivity : AppCompatActivity() {
     private fun refresh() {
         roms = library.list()
         countText.visibility = if (roms.isEmpty()) View.GONE else View.VISIBLE
-        countText.text = "${roms.size} jogo(s)"
+        countText.text = trf("%d jogo(s)", roms.size)
         adapter.notifyDataSetChanged()
         val first = if (roms.isNotEmpty()) 1 else 0
         rv.post {
@@ -298,8 +367,8 @@ class MainActivity : AppCompatActivity() {
     private fun updateTitle() {
         val isGame = centerPos in 1..roms.size
         if (!isGame) {
-            gameTitle.text = if (roms.isEmpty()) "Nenhum jogo ainda" else "Adicionar ROMs"
-            gameSub.text = if (roms.isEmpty()) "Toque no card + para escolher seus arquivos" else ".sfc .smc .gen .md .bin .nes .z64 .n64 .v64"
+            gameTitle.text = if (roms.isEmpty()) tr("Nenhum jogo ainda") else tr("Adicionar ROMs")
+            gameSub.text = if (roms.isEmpty()) tr("Toque no card + para escolher seus arquivos") else ".sfc .smc .gen .md .bin .nes .z64 .n64 .v64 .nds .3ds .cue .iso .chd"
             aurora.setAccent(defaultAccent)
         } else {
             val rom = roms[centerPos - 1]
@@ -322,8 +391,8 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(titleOf(rom))
             .setItems(arrayOf(
-                "Editar nome", "Escolher capa da galeria", "Buscar capa na internet",
-                "Restaurar nome e capa originais", "Remover ROM e saves"
+                tr("Editar nome"), tr("Escolher capa da galeria"), tr("Buscar capa na internet"),
+                tr("Restaurar nome e capa originais"), tr("Remover ROM e saves")
             )) { _, which ->
                 when (which) {
                     0 -> editName(rom)
@@ -331,14 +400,14 @@ class MainActivity : AppCompatActivity() {
                     2 -> if (sys != null) lifecycleScope.launch {
                         covers.clear(rom)
                         val ok = withContext(Dispatchers.IO) { covers.fetchOnline(rom, sys) }
-                        Toast.makeText(this@MainActivity, if (ok) "Capa encontrada!" else "Capa não encontrada (o nome do arquivo precisa ser igual ao nome oficial do jogo)", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@MainActivity, if (ok) tr("Capa encontrada!") else tr("Capa não encontrada (o nome do arquivo precisa ser igual ao nome oficial do jogo)"), Toast.LENGTH_LONG).show()
                         adapter.notifyDataSetChanged(); updateTitle()
                     }
                     3 -> { titles.clear(rom); covers.clear(rom); adapter.notifyDataSetChanged(); updateTitle(); fetchMissingCovers() }
                     4 -> AlertDialog.Builder(this)
-                        .setMessage("Remover \"${titleOf(rom)}\" e todos os saves dela?")
-                        .setPositiveButton("Remover") { _, _ -> titles.clear(rom); library.delete(rom); refresh() }
-                        .setNegativeButton("Cancelar", null).show()
+                        .setMessage(trf("Remover %s e todos os saves dela?", titleOf(rom)))
+                        .setPositiveButton(tr("Remover")) { _, _ -> titles.clear(rom); library.delete(rom); refresh() }
+                        .setNegativeButton(tr("Cancelar"), null).show()
                 }
             }.show()
     }
@@ -354,13 +423,13 @@ class MainActivity : AppCompatActivity() {
             addView(input)
         }
         AlertDialog.Builder(this)
-            .setTitle("Nome do jogo")
+            .setTitle(tr("Nome do jogo"))
             .setView(box)
-            .setPositiveButton("Salvar") { _, _ ->
+            .setPositiveButton(tr("Salvar")) { _, _ ->
                 titles.set(rom, input.text.toString())
                 adapter.notifyDataSetChanged(); updateTitle()
             }
-            .setNegativeButton("Cancelar", null)
+            .setNegativeButton(tr("Cancelar"), null)
             .show()
     }
 
@@ -389,7 +458,7 @@ class MainActivity : AppCompatActivity() {
             val plus = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
                 addView(TextView(ctx).apply { text = "+"; textSize = 80f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
-                addView(TextView(ctx).apply { text = "Adicionar ROMs"; textSize = 16f; setTextColor(Color.parseColor("#D0D6E2")); gravity = Gravity.CENTER })
+                addView(TextView(ctx).apply { text = tr("Adicionar ROMs"); textSize = 16f; setTextColor(Color.parseColor("#D0D6E2")); gravity = Gravity.CENTER })
             }
             card.addView(plus, match())
 

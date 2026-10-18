@@ -4,6 +4,8 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
@@ -34,10 +36,29 @@ class VideoRecorder(
     private val context: Context,
     private val system: GameSystem,
     private val pressed: () -> Set<String>,
-    private val projection: MediaProjection?
+    private val projection: MediaProjection?,
+    private val showInputs: Boolean,
+    private val showFps: Boolean,
+    private val showControls: Boolean,
+    private val fps: () -> Int,
+    private val controls: ControlsOverlay?
 ) {
     var hasAudio = false
         private set
+
+    /** Motivo da falha do áudio (para mostrar ao jogador). */
+    var audioError: String? = null
+        private set
+
+    /** Quantos pedaços de áudio entraram no vídeo (0 = ficou mudo). */
+    @Volatile var audioSamples = 0
+        private set
+
+    private val fpsPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        isFakeBoldText = true
+        setShadowLayer(6f, 0f, 2f, Color.BLACK)
+    }
 
     // vídeo
     private var vCodec: MediaCodec? = null
@@ -100,16 +121,16 @@ class VideoRecorder(
             vCodec = vc
 
             if (projection != null) {
-                try { setupAudio(); hasAudio = true } catch (e: Exception) { hasAudio = false; releaseAudio() }
+                try { setupAudio(); hasAudio = true } catch (e: Exception) { hasAudio = false; audioError = e.javaClass.simpleName + ": " + (e.message ?: ""); releaseAudio() }
             }
             expectedTracks = if (hasAudio) 2 else 1
             muxer = MediaMuxer(tmpFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
             running = true
-            vDrain = Thread { drain(vc) }.also { it.start() }
+            vDrain = Thread { drain(vc, false) }.also { it.start() }
             if (hasAudio) {
                 val ac = aCodec!!
-                aDrain = Thread { drain(ac) }.also { it.start() }
+                aDrain = Thread { drain(ac, true) }.also { it.start() }
                 audioThread = Thread { audioLoop() }.also { it.start() }
             }
             captureThread.start()
@@ -214,8 +235,15 @@ class VideoRecorder(
             val c: Canvas = s.lockHardwareCanvas()
             try {
                 c.drawBitmap(frame, 0f, 0f, null)
-                val cw = h * 0.42f
-                ControllerHud.draw(c, system, pressed(), h * 0.03f, h - h * 0.03f - cw * 64f / 120f, cw)
+                if (showControls) controls?.drawForRecording(c, w.toFloat(), h.toFloat())
+                if (showInputs) {
+                    val cw = h * 0.42f
+                    ControllerHud.draw(c, system, pressed(), h * 0.03f, h - h * 0.03f - cw * 64f / 120f, cw)
+                }
+                if (showFps) {
+                    fpsPaint.textSize = h * 0.05f
+                    c.drawText("FPS: " + fps(), h * 0.03f, h * 0.08f, fpsPaint)
+                }
             } finally {
                 s.unlockCanvasAndPost(c)
             }
@@ -272,7 +300,7 @@ class VideoRecorder(
       }
     }
 
-    private fun drain(codec: MediaCodec) {
+    private fun drain(codec: MediaCodec, isAudio: Boolean) {
         val info = MediaCodec.BufferInfo()
         var track = -1
         try {
@@ -284,7 +312,10 @@ class VideoRecorder(
                     val buf = codec.getOutputBuffer(idx)
                     if (buf != null && info.size > 0 && track >= 0 &&
                         (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
-                    ) writeSample(track, buf, info)
+                    ) {
+                        writeSample(track, buf, info)
+                        if (isAudio) audioSamples++
+                    }
                     codec.releaseOutputBuffer(idx, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
                 }

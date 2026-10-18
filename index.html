@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RetroDroid: emulador de Super Nintendo, Mega Drive, NES, Nintendo 64, DS, 3DS e Saturn para Android</title>
+<meta name="description" content="RetroDroid roda jogos de Super Nintendo, Mega Drive, NES, Nintendo 64, DS, 3DS e Sega Saturn no Android, com controles na tela, save state com foto e gravação de vídeo. Grátis e de código aberto.">
+<meta name="theme-color" content="#090A0F">
+<meta property="og:type" content="website">
+<meta property="og:title" content="RetroDroid: seus jogos clássicos num só launcher">
+<meta property="og:description" content="Sete consoles clássicos no Android. Grátis e de código aberto.">
+<meta property="og:image" content="icon.png">
+<link rel="icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#090A0F; --ink:#F2F4FA; --muted:#9AA3B2; --line:rgba(255,255,255,.12);
+  --snes:#7B5CFF; --md:#2F7BFF; --nes:#FF4D4D; --n64:#1FBF7A;
+  --head:"Sora","Trebuchet MS",system-ui,sans-serif;
+  --body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font:17px/1.6 var(--body);overflow-x:hidden}
+a{color:inherit}
+:focus-visible{outline:3px solid #fff;outline-offset:3px;border-radius:6px}
+.wrap{width:min(1080px,100% - 40px);margin-inline:auto}
+
+/* fundo: a única animação da página */
+.aurora{position:fixed;inset:0;z-index:-1;overflow:hidden;background:linear-gradient(#10131c,#05060a)}
+.aurora i{position:absolute;width:70vmax;height:70vmax;border-radius:50%;filter:blur(90px);opacity:.38;animation:drift 38s ease-in-out infinite alternate}
+.aurora i:nth-child(1){background:var(--snes);left:-20vmax;top:-25vmax}
+.aurora i:nth-child(2){background:var(--n64);right:-25vmax;top:10vmax;animation-delay:-12s}
+.aurora i:nth-child(3){background:var(--md);left:20vmax;bottom:-40vmax;animation-delay:-24s}
+@keyframes drift{to{transform:translate(8vmax,6vmax) scale(1.15)}}
+@media (prefers-reduced-motion:reduce){.aurora i{animation:none}}
+
+header{padding:22px 0}
+header .wrap{display:flex;align-items:center;gap:12px}
+header img{width:40px;height:40px;border-radius:10px}
+header b{font:800 20px var(--head);letter-spacing:.02em}
+header a.src{margin-left:auto;color:var(--muted);text-decoration:none;font-size:15px}
+header a.src:hover{color:var(--ink)}
+
+/* hero */
+.hero{display:grid;grid-template-columns:1fr 1.15fr;gap:40px;align-items:center;padding:40px 0 80px}
+.beta{display:inline-block;padding:4px 12px;border-radius:99px;background:rgba(255,255,255,.14);font-size:14px;font-weight:600}
+h1{font:800 clamp(34px,5.4vw,58px)/1.08 var(--head);letter-spacing:-.02em;margin:16px 0}
+.lead{color:#D0D6E2;max-width:34ch;font-size:19px}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0 12px}
+.btn{display:inline-block;padding:14px 24px;border-radius:14px;font:700 17px var(--head);text-decoration:none;transition:transform .15s}
+.btn:hover{transform:translateY(-2px)}
+.btn.main{background:#fff;color:#0b0d14}
+.btn.alt{border:1.5px solid var(--line);color:var(--ink)}
+.note{color:var(--muted);font-size:15px}
+
+/* maquete do launcher */
+.phone{aspect-ratio:20/9.4;border-radius:28px;border:2px solid rgba(255,255,255,.18);background:linear-gradient(135deg,#0f2a22,#0a0c12 70%);padding:5% 3%;display:flex;flex-direction:column;justify-content:center;box-shadow:0 30px 80px rgba(31,191,122,.25)}
+.row{display:flex;align-items:center;justify-content:center;gap:4%}
+.c{position:relative;aspect-ratio:4/5;border-radius:14px;overflow:hidden;width:20%;display:flex;align-items:center;justify-content:center;text-align:center;font:700 clamp(8px,1.5vw,15px)/1.2 var(--head);padding:4px;opacity:.55;transform:scale(.88)}
+.c em{position:absolute;left:6%;top:5%;font:700 clamp(6px,.9vw,10px) var(--head);font-style:normal;padding:2px 6px;border-radius:6px;background:var(--b)}
+.c.mid{width:27%;opacity:1;transform:scale(1);border:3px solid #5DFFB0;box-shadow:0 0 40px rgba(93,255,176,.55)}
+.cap{text-align:center;margin-top:5%;font:700 clamp(10px,1.8vw,18px) var(--head)}
+.cap small{display:block;font:400 clamp(8px,1.2vw,12px) var(--body);color:var(--muted)}
+
+/* seções */
+section{padding:56px 0;border-top:1px solid var(--line)}
+h2{font:800 clamp(26px,3.6vw,38px)/1.15 var(--head);letter-spacing:-.01em;margin-bottom:28px;max-width:20ch}
+.consoles div{display:grid;grid-template-columns:10px 1fr;gap:18px;padding:18px 0;border-bottom:1px solid var(--line)}
+.consoles div:last-child{border-bottom:0}
+.consoles span{border-radius:5px;background:var(--k)}
+.consoles h3{font:700 21px var(--head)}
+.consoles p{color:var(--muted);max-width:62ch}
+.feat{display:grid;grid-template-columns:repeat(2,1fr);gap:30px 48px}
+.feat h3{font:700 19px var(--head);margin-bottom:4px}
+.feat p{color:#C4CBD8;max-width:44ch}
+ol{padding-left:0;list-style:none;counter-set:s;max-width:60ch}
+ol li{counter-increment:s;display:grid;grid-template-columns:44px 1fr;gap:14px;margin-bottom:20px}
+ol li::before{content:counter(s);width:36px;height:36px;border-radius:50%;background:#fff;color:#0b0d14;font:800 17px/36px var(--head);text-align:center}
+details{border-bottom:1px solid var(--line);padding:16px 0;max-width:70ch}
+summary{cursor:pointer;font:700 18px var(--head)}
+details p{color:#C4CBD8;margin-top:10px}
+footer{padding:44px 0 60px;border-top:1px solid var(--line);color:var(--muted);font-size:14.5px}
+footer p+p{margin-top:10px}
+
+@media (max-width:820px){
+  .hero{grid-template-columns:1fr;padding-bottom:56px}
+  .feat{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+
+<header>
+  <div class="wrap">
+    <img src="icon.png" alt="">
+    <b>RetroDroid</b>
+    <a class="src" href="https://github.com/playerzin13mv/retrodroid">Código no GitHub</a>
+  </div>
+</header>
+
+<main>
+<div class="wrap hero">
+  <div>
+    <span class="beta">Versão beta</span>
+    <h1>Seus jogos clássicos, num só launcher.</h1>
+    <p class="lead">Rode jogos de Super Nintendo, Mega Drive, NES, Nintendo 64, DS, 3DS e Sega Saturn no seu Android, com controles na tela feitos pra cada console.</p>
+    <div class="cta">
+      <a class="btn main" href="https://github.com/playerzin13mv/retrodroid/releases/latest/download/RetroDroid.apk" download="RetroDroid.apk">Baixar o APK</a>
+      <a class="btn alt" href="#instalar">Como instalar</a>
+    </div>
+    <p class="note">Grátis. Precisa de Android 10 ou superior, 64 bits. <a href="https://github.com/playerzin13mv/retrodroid/releases">Todas as versões</a></p>
+  </div>
+
+  <div aria-hidden="true">
+    <div class="phone">
+      <div class="row">
+        <div class="c" style="background:linear-gradient(150deg,#FFB347,#6B3A00);--b:var(--md)"><em>MD</em>Corrida Turbo</div>
+        <div class="c mid" style="background:linear-gradient(150deg,#66FFB2,#0C5C45);--b:var(--snes)"><em>SNES</em>Mundo das Nuvens</div>
+        <div class="c" style="background:linear-gradient(150deg,#C67BFF,#4B1D78);--b:var(--nes)"><em>NES</em>Aventura Pixel</div>
+      </div>
+      <div class="cap">Mundo das Nuvens<small>Exemplo do launcher</small></div>
+    </div>
+  </div>
+</div>
+
+<section>
+  <div class="wrap consoles">
+    <h2>Sete consoles, um app só.</h2>
+    <div style="--k:var(--snes)"><span></span><article><h3>Super Nintendo</h3><p>Arquivos .sfc e .smc. Botões A, B, X, Y, L, R, Start e Select.</p></article></div>
+    <div style="--k:var(--md)"><span></span><article><h3>Mega Drive</h3><p>Arquivos .gen, .md e .bin. Controle de seis botões: A, B, C, X, Y, Z, além de Start e Mode.</p></article></div>
+    <div style="--k:var(--nes)"><span></span><article><h3>NES</h3><p>Arquivos .nes. Botões A, B, Start e Select.</p></article></div>
+    <div style="--k:var(--n64)"><span></span><article><h3>Nintendo 64</h3><p>Arquivos .z64, .n64 e .v64. Analógico na tela, botões C, Z, L e R.</p></article></div>
+    <div style="--k:#8E9AAF"><span></span><article><h3>Nintendo DS</h3><p>Arquivos .nds. Botões do console e toque na tela.</p></article></div>
+    <div style="--k:#E0457B"><span></span><article><h3>Nintendo 3DS</h3><p>Arquivos .3ds, .cci e .cxi. Circle pad, ZL e ZR. Exige um celular potente.</p></article></div>
+    <div style="--k:#00B8D9"><span></span><article><h3>Sega Saturn</h3><p>Arquivos .cue, .iso e .chd. Precisa do arquivo de BIOS, que você importa pelo app.</p></article></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>O que você ganha ao jogar.</h2>
+    <div class="feat">
+      <div><h3>Launcher estilo console</h3><p>Deslize pelos seus jogos, ouça o clique a cada troca e veja o fundo mudar de cor com a capa.</p></div>
+      <div><h3>Save state com foto</h3><p>Seis slots por jogo. Cada slot guarda uma imagem do momento em que você salvou.</p></div>
+      <div><h3>Gravação de vídeo com áudio</h3><p>Grava só o jogo, sem os botões da tela, com um mini-controle no canto mostrando o que você aperta.</p></div>
+      <div><h3>Capas e nomes seus</h3><p>Escolha a capa na galeria ou deixe o app buscar pela internet. Renomeie qualquer jogo.</p></div>
+      <div><h3>Controles do seu jeito</h3><p>Arraste os botões de lugar, use Toggle X e Toggle B para segurar um botão, mude a opacidade e acelere o jogo em 2x ou 3x.</p></div>
+      <div><h3>Salvar e levar</h3><p>Exporte um save para um arquivo .save e abra em outro aparelho.</p></div>
+      <div><h3>Visual de TV de tubo</h3><p>Ligue o efeito CRT ou desligue a suavização, do jeito que você lembra.</p></div>
+      <div><h3>Quatro idiomas</h3><p>Português, inglês, espanhol e mandarim.</p></div>
+      <div><h3>Controle físico</h3><p>Plugue ou pareie um controle e jogue sem usar a tela.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="instalar">
+  <div class="wrap">
+    <h2>Como instalar.</h2>
+    <ol>
+      <li><span>Toque em <a href="https://github.com/playerzin13mv/retrodroid/releases/latest/download/RetroDroid.apk" download="RetroDroid.apk">Baixar o APK</a> no topo desta página.</span></li>
+      <li><span>Abra o arquivo e, quando o Android pedir, permita a instalação de apps desta fonte.</span></li>
+      <li><span>Abra o RetroDroid, toque em Adicionar ROMs e escolha os seus jogos.</span></li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Dúvidas comuns.</h2>
+    <details><summary>O app vem com jogos?</summary><p>Não. Você precisa levar as suas próprias ROMs, de jogos que você tem o direito de usar.</p></details>
+    <details><summary>É grátis?</summary><p>Sim. O app é gratuito, tem código aberto e não mostra anúncios.</p></details>
+    <details><summary>Precisa de internet?</summary><p>Só pra buscar capas. Os jogos rodam sem conexão.</p></details>
+    <details><summary>Por que o Android avisa que o app é de fonte desconhecida?</summary><p>Porque ele não vem da Play Store. O código está aberto no GitHub pra você conferir.</p></details>
+    <details><summary>É uma versão final?</summary><p>Não, é um beta. Alguns jogos ou botões podem se comportar diferente. Conte o problema na página do projeto no GitHub.</p></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>RetroDroid não inclui jogos e não tem relação com Nintendo, Sega ou outras empresas. Os nomes dos consoles aparecem só para dizer o que o app consegue rodar.</p>
+    <p>Feito com LibretroDroid e os cores Snes9x, Genesis Plus GX, FCEUmm, Mupen64Plus-Next, melonDS, Citra e Yabause/YabaSanshiro. Cada projeto tem a sua licença.</p>
+  </div>
+</footer>
+</body>
+</html>
