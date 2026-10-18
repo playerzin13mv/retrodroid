@@ -11,8 +11,8 @@ O workflow descobre sozinho uma versão da LibretroDroid que existe no JitPack (
 "Descobrir versão..." no log) e baixa os cores: Snes9x, Genesis Plus GX, FCEUmm e Mupen64Plus-Next.
 
 ## Formatos
-.sfc .smc (SNES) • .gen .md .smd .bin (Mega Drive) • .nes (NES) • .z64 .n64 .v64 (Nintendo 64)
-
+.sfc .smc (SNES) • .gen .md .smd .bin (Mega Drive) • .nes (NES) • .z64 .n64 .v64 (Nintendo 64) *.cue .bin (SEGA SATURN) 
+* .nds (NINTENDO DS & 3DS)
 ## Novidades
 - Gravação de vídeo com áudio (pede permissão de microfone e de "captura de tela" só pra pegar o som do jogo).
 - Mini-controle do console no canto do vídeo (botão apertado = branco).
