@@ -1,6 +1,5 @@
 package com.retrodroid.app
 
-import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -14,22 +13,27 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.media.MediaRecorder
 import android.media.projection.MediaProjection
-import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
-import android.provider.MediaStore
+import android.util.Log
 import android.view.PixelCopy
 import android.view.Surface
 import android.view.SurfaceView
 import java.io.File
 import java.nio.ByteBuffer
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * Grava só a imagem do jogo (a SurfaceView do emulador): os controles na tela NÃO entram no vídeo.
- * No canto inferior esquerdo desenha um mini-controle do console, e o botão apertado fica branco.
- * Se [projection] existir, grava também o áudio do jogo (captura de áudio interno do Android 10+).
+ * Grava só a imagem do jogo (a SurfaceView do emulador): o menu nunca entra no vídeo.
+ * Opcionais: mini-controle com os botões apertados, FPS e os controles da tela.
+ * Áudio: som do jogo (captura de áudio interno do Android 10+), a voz do jogador (microfone), ou os dois;
+ * com os dois, o som do jogo abaixa enquanto o jogador fala.
+ * Tudo que acontece vai para o RecLog (relatório da gravação).
  */
 class VideoRecorder(
     private val view: SurfaceView,
@@ -41,20 +45,24 @@ class VideoRecorder(
     private val showFps: Boolean,
     private val showControls: Boolean,
     private val fps: () -> Int,
-    private val controls: ControlsOverlay?
+    private val controls: ControlsOverlay?,
+    private val useGame: Boolean,
+    private val useMic: Boolean,
+    private val duckAmount: Float,      // 0 = não abaixa o jogo; 0.6 = abaixa 60% quando o jogador fala
+    private val title: String
 ) {
     var hasAudio = false
         private set
 
-    /** Motivo da falha do áudio (para mostrar ao jogador). */
     var audioError: String? = null
         private set
 
-    /** true se, em algum momento, o áudio do jogo foi realmente captado (não só silêncio). */
     @Volatile var heardSound = false
         private set
 
     @Volatile private var peak = 0
+
+    val micEnabled: Boolean get() = useMic
 
     /** Maior volume captado desde a última chamada (0 a 32767). */
     fun takePeak(): Int {
@@ -63,9 +71,11 @@ class VideoRecorder(
         return p
     }
 
-    /** Quantos pedaços de áudio entraram no vídeo (0 = ficou mudo). */
     @Volatile var audioSamples = 0
         private set
+
+    @Volatile private var videoFrames = 0
+    @Volatile private var audioQueued = 0
 
     private val fpsPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -84,7 +94,8 @@ class VideoRecorder(
 
     // áudio
     private var aCodec: MediaCodec? = null
-    private var audioRecord: AudioRecord? = null
+    private var gameRecord: AudioRecord? = null
+    private var micRecord: AudioRecord? = null
     private var audioThread: Thread? = null
     private val sampleRate = 48000
 
@@ -98,6 +109,7 @@ class VideoRecorder(
     private var baseUs = 0L
     private var startedAt = 0L
     private val lastPts = HashMap<Int, Long>()
+    private val written = HashMap<Int, Int>()
 
     private class Pending(val track: Int, val data: ByteArray, val pts: Long, val flags: Int)
     private val pending = ArrayList<Pending>()
@@ -111,11 +123,12 @@ class VideoRecorder(
     fun start(): Boolean {
         val vw = view.width
         val vh = view.height
-        if (vw <= 0 || vh <= 0) return false
+        if (vw <= 0 || vh <= 0) { RecLog.add("ERRO: a tela do jogo ainda não tem tamanho"); return false }
         h = 720
         w = ((vw.toFloat() / vh * h).toInt() / 2) * 2
         frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         tmpFile = File(context.cacheDir, "rec_${System.currentTimeMillis()}.mp4")
+        RecLog.add("vídeo ${w}x$h; jogo=$useGame mic=$useMic duck=$duckAmount projeção=${projection != null}")
 
         return try {
             baseUs = nowUs()
@@ -132,9 +145,21 @@ class VideoRecorder(
             surface = vc.createInputSurface()
             vc.start()
             vCodec = vc
+            RecLog.add("codificador de vídeo iniciado")
 
-            if (projection != null) {
-                try { setupAudio(); hasAudio = true } catch (e: Exception) { hasAudio = false; audioError = e.javaClass.simpleName + ": " + (e.message ?: ""); releaseAudio() }
+            if (useGame || useMic) {
+                try {
+                    setupAudio()
+                    hasAudio = true
+                    RecLog.add("áudio configurado")
+                } catch (e: Exception) {
+                    hasAudio = false
+                    audioError = e.javaClass.simpleName + ": " + (e.message ?: "")
+                    RecLog.add("ERRO no áudio: " + Log.getStackTraceString(e).take(700))
+                    releaseAudio()
+                }
+            } else {
+                RecLog.add("gravação sem áudio (escolha do jogador)")
             }
             expectedTracks = if (hasAudio) 2 else 1
             muxer = MediaMuxer(tmpFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
@@ -151,6 +176,7 @@ class VideoRecorder(
             handler.post(captureTick)
             true
         } catch (e: Exception) {
+            RecLog.add("ERRO ao iniciar a gravação: " + Log.getStackTraceString(e).take(700))
             running = false
             releaseAll()
             false
@@ -159,25 +185,38 @@ class VideoRecorder(
 
     // ------------------------------------------------------------ áudio
     private fun setupAudio() {
-        val cfg = AudioPlaybackCaptureConfiguration.Builder(projection!!)
-            .addMatchingUsage(AudioAttributes.USAGE_GAME)
-            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-            .build()
-        val af = AudioFormat.Builder()
-            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-            .setSampleRate(sampleRate)
-            .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
-            .build()
-        val minBuf = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
-            .let { if (it <= 0) 16384 else it }
-        val ar = AudioRecord.Builder()
-            .setAudioPlaybackCaptureConfig(cfg)
-            .setAudioFormat(af)
-            .setBufferSizeInBytes(minBuf * 4)
-            .build()
-        if (ar.state != AudioRecord.STATE_INITIALIZED) throw IllegalStateException("AudioRecord não iniciou")
-        audioRecord = ar
+        if (useGame) {
+            val proj = projection ?: throw IllegalStateException("sem permissão de captura de tela/áudio")
+            val cfg = AudioPlaybackCaptureConfiguration.Builder(proj)
+                .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                .build()
+            val af = AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(sampleRate)
+                .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+                .build()
+            val minBuf = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+                .let { if (it <= 0) 16384 else it }
+            val ar = AudioRecord.Builder()
+                .setAudioPlaybackCaptureConfig(cfg)
+                .setAudioFormat(af)
+                .setBufferSizeInBytes(minBuf * 4)
+                .build()
+            RecLog.add("áudio do jogo: AudioRecord estado=${ar.state} (1 = ok)")
+            if (ar.state != AudioRecord.STATE_INITIALIZED) throw IllegalStateException("AudioRecord do jogo não iniciou")
+            gameRecord = ar
+        }
+        if (useMic) {
+            val minMic = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                .let { if (it <= 0) 8192 else it }
+            val mr = AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minMic * 4)
+            RecLog.add("microfone: AudioRecord estado=${mr.state} (1 = ok)")
+            if (mr.state != AudioRecord.STATE_INITIALIZED) throw IllegalStateException("microfone não iniciou")
+            micRecord = mr
+        }
+        if (gameRecord == null && micRecord == null) throw IllegalStateException("nenhuma fonte de áudio")
 
         val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 2).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -192,41 +231,124 @@ class VideoRecorder(
 
     private fun bytesToUs(bytes: Int): Long = bytes / 4L * 1_000_000L / sampleRate
 
+    private fun pcm(b: ByteArray, off: Int): Int =
+        ((b[off + 1].toInt() shl 8) or (b[off].toInt() and 0xFF)).toShort().toInt()
+
+    private fun appendMic(src: ByteArray, bytes: Int, q: ShortArray, count: Int): Int {
+        var c = count
+        var i = 0
+        while (i + 1 < bytes && c < q.size) {
+            q[c++] = ((src[i + 1].toInt() shl 8) or (src[i].toInt() and 0xFF)).toShort()
+            i += 2
+        }
+        return c
+    }
+
     private fun audioLoop() {
-        val ar = audioRecord ?: return
+        val g = gameRecord
+        val m = micRecord
         val ac = aCodec ?: return
-        val buf = ByteArray(4096)
-        val silence = ByteArray(3840)
+        val out = ByteArray(4096)         // PCM 16 bits estéreo que vai pro AAC
+        val gameBuf = ByteArray(4096)
+        val micTmp = ByteArray(2048)
+        val micQ = ShortArray(48000)
+        var micCount = 0
+        var duckGain = 1f
         var lastIn = 0L
+        var reads = 0
+        var lastLog = 0L
+        var logPeak = 0
         try {
-            ar.startRecording()
-            if (ar.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-                audioError = "não começou a gravar (estado " + ar.recordingState + ")"
-            }
+            g?.startRecording()
+            m?.startRecording()
+            RecLog.add("áudio: gravando (jogo=${g?.recordingState}, mic=${m?.recordingState}; 3 = gravando)")
             while (running) {
-                val n = ar.read(buf, 0, buf.size)
-                val data: ByteArray
-                val len: Int
-                if (n > 0) {
-                    data = buf
-                    len = n
-                    var p = 0
-                    var i = 0
-                    while (i + 1 < n) {
-                        val sample = ((buf[i + 1].toInt() shl 8) or (buf[i].toInt() and 0xFF)).toShort().toInt()
-                        val a = if (sample < 0) -sample else sample
-                        if (a > p) p = a
-                        i += 2
+                var frames = 0
+                if (g != null) {
+                    val n = g.read(gameBuf, 0, gameBuf.size)
+                    reads++
+                    if (n > 0) {
+                        frames = n / 4
+                    } else {
+                        if (n < 0 && audioError == null) {
+                            audioError = "leitura do jogo falhou (código $n)"
+                            RecLog.add("ERRO: " + audioError)
+                        }
+                        try { Thread.sleep(20) } catch (_: InterruptedException) {}
                     }
-                    if (p > peak) peak = p
-                    if (p > 300) heardSound = true
-                } else {
-                    if (n < 0) audioError = "leitura falhou (código " + n + ")"
-                    // sem dados: alimenta silêncio no ritmo real, pra o vídeo não ficar esperando o áudio
-                    try { Thread.sleep(20) } catch (_: InterruptedException) {}
-                    data = silence
-                    len = silence.size
+                    if (m != null) {
+                        val mn = m.read(micTmp, 0, micTmp.size, AudioRecord.READ_NON_BLOCKING)
+                        if (mn > 0) micCount = appendMic(micTmp, mn, micQ, micCount)
+                    }
+                } else if (m != null) {
+                    val mn = m.read(micTmp, 0, micTmp.size)
+                    reads++
+                    if (mn > 0) {
+                        micCount = appendMic(micTmp, mn, micQ, micCount)
+                    } else {
+                        if (mn < 0 && audioError == null) {
+                            audioError = "leitura do microfone falhou (código $mn)"
+                            RecLog.add("ERRO: " + audioError)
+                        }
+                        try { Thread.sleep(20) } catch (_: InterruptedException) {}
+                    }
+                    frames = minOf(micCount, out.size / 4)
                 }
+                if (micCount > 9600) {   // microfone atrasado mais de 200 ms: descarta o mais velho
+                    val keep = 4800
+                    System.arraycopy(micQ, micCount - keep, micQ, 0, keep)
+                    micCount = keep
+                }
+
+                val outFrames = if (frames > 0) frames else 960
+                val take = minOf(micCount, outFrames)
+
+                // o jogo abaixa enquanto o jogador fala
+                var micPeak = 0
+                for (i in 0 until take) {
+                    val a = if (micQ[i] < 0) -micQ[i].toInt() else micQ[i].toInt()
+                    if (a > micPeak) micPeak = a
+                }
+                val target = if (duckAmount > 0f && g != null && m != null && micPeak > 1500) 1f - duckAmount else 1f
+                duckGain += (target - duckGain) * (if (target < duckGain) 0.4f else 0.08f)
+
+                var peakNow = 0
+                for (i in 0 until outFrames) {
+                    var l = 0
+                    var r = 0
+                    if (g != null && frames > 0) {
+                        l = (pcm(gameBuf, 4 * i) * duckGain).toInt()
+                        r = (pcm(gameBuf, 4 * i + 2) * duckGain).toInt()
+                    }
+                    if (i < take) {
+                        val ms = (micQ[i] * 1.4f).toInt()
+                        l += ms
+                        r += ms
+                    }
+                    if (l > 32767) l = 32767 else if (l < -32768) l = -32768
+                    if (r > 32767) r = 32767 else if (r < -32768) r = -32768
+                    out[4 * i] = l.toByte()
+                    out[4 * i + 1] = (l shr 8).toByte()
+                    out[4 * i + 2] = r.toByte()
+                    out[4 * i + 3] = (r shr 8).toByte()
+                    val a = if (l < 0) -l else l
+                    if (a > peakNow) peakNow = a
+                }
+                if (take > 0) {
+                    System.arraycopy(micQ, take, micQ, 0, micCount - take)
+                    micCount -= take
+                }
+                if (peakNow > peak) peak = peakNow
+                if (peakNow > 300) heardSound = true
+                if (peakNow > logPeak) logPeak = peakNow
+                val nowMs = SystemClock.uptimeMillis()
+                if (nowMs - lastLog > 1000) {
+                    RecLog.add("áudio: pico=$logPeak leituras=$reads fila_mic=$micCount ganho_jogo=${"%.2f".format(Locale.US, duckGain)}")
+                    lastLog = nowMs
+                    logPeak = 0
+                }
+
+                val len = outFrames * 4
                 var off = 0
                 while (off < len && running) {
                     val idx = ac.dequeueInputBuffer(10_000)
@@ -234,18 +356,21 @@ class VideoRecorder(
                     val ib = ac.getInputBuffer(idx) ?: break
                     ib.clear()
                     val chunk = minOf(ib.remaining(), len - off)
-                    ib.put(data, off, chunk)
+                    ib.put(out, off, chunk)
                     val pts = (nowUs() - baseUs - bytesToUs(len - off)).coerceAtLeast(0L)
                     ac.queueInputBuffer(idx, 0, chunk, pts, 0)
+                    audioQueued++
                     lastIn = pts
                     off += chunk
                 }
             }
             val idx = ac.dequeueInputBuffer(100_000)
             if (idx >= 0) ac.queueInputBuffer(idx, 0, 0, lastIn, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-            ar.stop()
+            try { g?.stop() } catch (_: Exception) {}
+            try { m?.stop() } catch (_: Exception) {}
         } catch (e: Exception) {
             audioError = e.javaClass.simpleName + ": " + (e.message ?: "")
+            RecLog.add("ERRO no laço de áudio: " + Log.getStackTraceString(e).take(700))
         }
     }
 
@@ -276,7 +401,7 @@ class VideoRecorder(
                 c.drawBitmap(frame, 0f, 0f, null)
                 if (showControls) controls?.drawForRecording(c, w.toFloat(), h.toFloat())
                 if (showInputs) {
-                    val cw = h * 0.42f
+                    val cw = minOf(h * 0.42f, w * 0.6f)
                     ControllerHud.draw(c, system, pressed(), h * 0.03f, h - h * 0.03f - cw * 64f / 120f, cw)
                 }
                 if (showFps) {
@@ -285,6 +410,7 @@ class VideoRecorder(
                 }
             } finally {
                 s.unlockCanvasAndPost(c)
+                videoFrames++
             }
         } catch (_: Exception) {
         }
@@ -295,6 +421,7 @@ class VideoRecorder(
         val m = muxer ?: return -1
         val t = m.addTrack(format)
         addedTracks++
+        RecLog.add("faixa adicionada ao arquivo: #$t (${format.getString(MediaFormat.KEY_MIME)}); $addedTracks de $expectedTracks")
         if (addedTracks >= expectedTracks) startMuxerLocked()
         t
     }
@@ -304,6 +431,7 @@ class VideoRecorder(
         if (muxerStarted) return
         m.start()
         muxerStarted = true
+        RecLog.add("arquivo de vídeo começou a ser escrito (faixas: $addedTracks)")
         for (p in pending) writeNow(p.track, p.data, p.pts, p.flags)
         pending.clear()
     }
@@ -312,31 +440,33 @@ class VideoRecorder(
         val bi = MediaCodec.BufferInfo()
         bi.set(0, data.size, pts, flags)
         muxer?.writeSampleData(track, ByteBuffer.wrap(data), bi)
+        written[track] = (written[track] ?: 0) + 1
     }
 
     private fun writeSample(track: Int, buf: ByteBuffer, info: MediaCodec.BufferInfo) {
-      synchronized(muxLock) {
-        var p = (info.presentationTimeUs - baseUs).coerceAtLeast(0L)
-        val last = lastPts[track] ?: -1L
-        if (p <= last) p = last + 1
-        lastPts[track] = p
+        synchronized(muxLock) {
+            var p = (info.presentationTimeUs - baseUs).coerceAtLeast(0L)
+            val last = lastPts[track] ?: -1L
+            if (p <= last) p = last + 1
+            lastPts[track] = p
 
-        buf.position(info.offset)
-        buf.limit(info.offset + info.size)
-        val arr = ByteArray(info.size)
-        buf.get(arr)
+            buf.position(info.offset)
+            buf.limit(info.offset + info.size)
+            val arr = ByteArray(info.size)
+            buf.get(arr)
 
-        // se o áudio demorar demais pra começar, segue só com o que já existe
-        if (!muxerStarted && addedTracks >= 1 && SystemClock.uptimeMillis() - startedAt > 5000) startMuxerLocked()
+            // se o áudio demorar demais pra começar, segue só com o que já existe
+            if (!muxerStarted && addedTracks >= 1 && SystemClock.uptimeMillis() - startedAt > 5000) {
+                RecLog.add("AVISO: passaram 5 s e falta uma faixa; seguindo só com as que existem")
+                startMuxerLocked()
+            }
 
-        if (muxerStarted) {
-            try { writeNow(track, arr, p, info.flags) } catch (_: Exception) {}
-        } else if (pending.size < 900) {
-            pending.add(Pending(track, arr, p, info.flags))
-        } else {
-            // fila cheia: descarta
+            if (muxerStarted) {
+                try { writeNow(track, arr, p, info.flags) } catch (_: Exception) {}
+            } else if (pending.size < 900) {
+                pending.add(Pending(track, arr, p, info.flags))
+            }
         }
-      }
     }
 
     private fun drain(codec: MediaCodec, isAudio: Boolean) {
@@ -359,7 +489,8 @@ class VideoRecorder(
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
                 }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            RecLog.add("ERRO no codificador de ${if (isAudio) "áudio" else "vídeo"}: " + e.javaClass.simpleName + " " + (e.message ?: ""))
         }
     }
 
@@ -369,24 +500,33 @@ class VideoRecorder(
         running = false
         try { handler.removeCallbacksAndMessages(null); captureThread.quitSafely() } catch (_: Exception) {}
         try { vCodec?.signalEndOfInputStream() } catch (_: Exception) {}
-        try { audioRecord?.stop() } catch (_: Exception) {}
+        try { gameRecord?.stop() } catch (_: Exception) {}
+        try { micRecord?.stop() } catch (_: Exception) {}
         try { audioThread?.join(3000) } catch (_: Exception) {}
         try { vDrain?.join(4000) } catch (_: Exception) {}
         try { aDrain?.join(4000) } catch (_: Exception) {}
-        synchronized(muxLock) {
-            if (!muxerStarted && addedTracks >= 1) startMuxerLocked() else Unit
-        }
+        synchronized(muxLock) { if (!muxerStarted && addedTracks >= 1) startMuxerLocked() }
         val ok = muxerStarted
+        RecLog.add("fim: quadros de vídeo=$videoFrames, blocos de áudio enviados=$audioQueued, escritos por faixa=$written, ouviu som=$heardSound")
         releaseAll()
-        if (!ok) { tmpFile.delete(); return false }
-        return saveToGallery(tmpFile)
+        if (!ok) {
+            RecLog.add("ERRO: o arquivo nunca começou a ser escrito")
+            tmpFile.delete()
+            RecLog.flush(context)
+            return false
+        }
+        val saved = saveToGallery(tmpFile)
+        RecLog.add(if (saved) "vídeo salvo na galeria" else "ERRO ao salvar na galeria")
+        RecLog.flush(context)
+        return saved
     }
 
     private fun releaseAudio() {
-        try { audioRecord?.release() } catch (_: Exception) {}
+        try { gameRecord?.release() } catch (_: Exception) {}
+        try { micRecord?.release() } catch (_: Exception) {}
         try { aCodec?.stop() } catch (_: Exception) {}
         try { aCodec?.release() } catch (_: Exception) {}
-        audioRecord = null; aCodec = null
+        gameRecord = null; micRecord = null; aCodec = null
     }
 
     private fun releaseAll() {
@@ -399,20 +539,10 @@ class VideoRecorder(
         vCodec = null; muxer = null; surface = null
     }
 
-    private fun saveToGallery(file: File): Boolean = try {
-        val name = "RetroDroid_${System.currentTimeMillis()}.mp4"
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/RetroDroid")
-        }
-        val uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-        if (uri == null) false else {
-            context.contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
-            file.delete()
-            true
-        }
-    } catch (e: Exception) {
-        false
+    private fun saveToGallery(file: File): Boolean {
+        val uri = MediaSaver.saveVideo(context, file, "RetroDroid") ?: return false
+        val stamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+        RecordingStore.add(context, uri, "$title  •  $stamp")
+        return true
     }
 }

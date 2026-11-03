@@ -46,7 +46,12 @@ class RecordService : Service() {
             .setContentText("Gravando o jogo…")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .build()
-        startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        try {
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            RecLog.add("serviço de gravação iniciado em primeiro plano")
+        } catch (e: Exception) {
+            RecLog.add("ERRO no serviço em primeiro plano: " + e.javaClass.simpleName + " " + (e.message ?: ""))
+        }
 
         var mp: MediaProjection? = null
         try {
@@ -56,8 +61,10 @@ class RecordService : Service() {
                 mp = getSystemService(MediaProjectionManager::class.java).getMediaProjection(code, data)
                 mp?.registerCallback(object : MediaProjection.Callback() {}, Handler(Looper.getMainLooper()))
             }
-        } catch (_: Exception) {
+            RecLog.add("projeção de mídia: " + (if (mp != null) "ok" else "NULA (sem dados do Android)"))
+        } catch (e: Exception) {
             mp = null
+            RecLog.add("ERRO ao obter a projeção: " + e.javaClass.simpleName + " " + (e.message ?: ""))
         }
         projection = mp
         val cb = onReady

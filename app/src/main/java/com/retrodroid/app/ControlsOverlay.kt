@@ -171,14 +171,20 @@ class ControlsOverlay(
         return l
     }
 
-    private fun posKey(c: Ctrl) = "${system.name}_${c.item.id}"
+    // posições salvas: uma para a horizontal (chave antiga) e outra para a vertical
+    private fun posKey(c: Ctrl) = "${system.name}_${c.item.id}" + (if (height > width) "_p" else "")
 
     private fun layoutAll() {
         if (width == 0 || height == 0) return
         val W = width.toFloat()
         val H = height.toFloat()
+        // U = unidade do layout. Na horizontal U = altura da tela; na vertical U = metade da largura,
+        // e os controles ficam num bloco colado embaixo (o jogo aparece em cima).
+        val portrait = H > W
+        val U = if (portrait) W / 2f else H
+        val top = if (portrait) H - U else 0f
         for (c in allCtrls()) {
-            val bw = c.item.size * H
+            val bw = c.item.size * U
             val bh = bw * c.released.height / c.released.width
             var cx: Float
             var cy: Float
@@ -189,11 +195,11 @@ class ControlsOverlay(
                 cx = sx * W; cy = sy * H
             } else {
                 cx = when (c.item.anchor) {
-                    'L' -> c.item.ox * H
-                    'R' -> W - c.item.ox * H
-                    else -> W / 2f + c.item.ox * H
+                    'L' -> c.item.ox * U
+                    'R' -> W - c.item.ox * U
+                    else -> W / 2f + c.item.ox * U
                 }
-                cy = c.item.fy * H
+                cy = top + c.item.fy * U
             }
             c.rect.set(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2)
         }

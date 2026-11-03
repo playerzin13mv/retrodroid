@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.SoundPool
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -153,6 +154,16 @@ class MainActivity : AppCompatActivity() {
             setShadowLayer(12f, 0f, 2f, Color.parseColor("#66000000"))
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         top.addView(TextView(this).apply {
+            text = "🌐"; textSize = 20f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            background = GradientDrawable().apply { setColor(Color.parseColor("#33FFFFFF")); shape = GradientDrawable.OVAL }
+            setOnClickListener { openUrl(AppInfo.SITE_URL) }
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(10) })
+        top.addView(TextView(this).apply {
+            text = "🎞"; textSize = 20f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            background = GradientDrawable().apply { setColor(Color.parseColor("#33FFFFFF")); shape = GradientDrawable.OVAL }
+            setOnClickListener { startActivity(Intent(this@MainActivity, VideosActivity::class.java)) }
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(10) })
+        top.addView(TextView(this).apply {
             text = "⚙"; textSize = 22f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
             background = GradientDrawable().apply { setColor(Color.parseColor("#33FFFFFF")); shape = GradientDrawable.OVAL }
             setOnClickListener { showSettings() }
@@ -212,13 +223,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================== configurações
+    private fun openUrl(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Exception) {
+            Toast.makeText(this, url, Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun showSettings() {
         val items = arrayOf(
             tr("Idioma"),
             tr("Configurações de gravação"),
             tr("Exibição (suavização e TV de tubo)"),
+            tr("Meus vídeos"),
+            tr("Site oficial do RetroDroid"),
             tr("Importar BIOS / firmware"),
-            tr("Sobre")
+            tr("Sobre o RetroDroid")
         )
         AlertDialog.Builder(this)
             .setTitle(tr("Configurações"))
@@ -227,17 +248,62 @@ class MainActivity : AppCompatActivity() {
                     0 -> chooseLanguage()
                     1 -> showView(tr("Configurações de gravação"), SettingsUi.recordingView(this, settings))
                     2 -> showView(tr("Exibição (suavização e TV de tubo)"), SettingsUi.displayView(this, settings))
-                    3 -> {
+                    3 -> startActivity(Intent(this, VideosActivity::class.java))
+                    4 -> openUrl(AppInfo.SITE_URL)
+                    5 -> {
                         Toast.makeText(this, tr("Escolha os arquivos de BIOS (o Sega Saturn precisa de um)."), Toast.LENGTH_LONG).show()
                         biosPicker.launch(arrayOf("*/*"))
                     }
-                    4 -> AlertDialog.Builder(this)
-                        .setTitle("RetroDroid")
-                        .setMessage(tr("Versão beta. Feito com LibretroDroid e os cores Snes9x, Genesis Plus GX, FCEUmm, Mupen64Plus-Next, melonDS, Citra e Yabause/YabaSanshiro."))
-                        .setPositiveButton(tr("Fechar"), null)
-                        .show()
+                    6 -> showAbout()
                 }
             }
+            .show()
+    }
+
+    /** Tela "Sobre": como a informação do sistema do celular (versão, criador, aparelho e consoles disponíveis). */
+    private fun showAbout() {
+        val pi = packageManager.getPackageInfo(packageName, 0)
+        val rows = ArrayList<Pair<String, String>>()
+        rows += tr("Versão") to (pi.versionName ?: "?") + " (" + pi.longVersionCode + ")"
+        rows += tr("Criador") to AppInfo.CREATOR
+        rows += tr("Criado com") to AppInfo.BUILT_WITH
+        rows += tr("Motor") to "Kotlin + LibretroDroid + libretro cores"
+        rows += tr("Compilado por") to "GitHub Actions"
+        rows += "Android" to Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")"
+        rows += tr("Aparelho") to Build.MANUFACTURER + " " + Build.MODEL
+        rows += tr("Processador") to Build.SUPPORTED_ABIS.joinToString(", ")
+        rows += tr("Idioma") to (I18n.options.firstOrNull { it.first == I18n.lang }?.second ?: I18n.lang)
+
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), dp(8))
+        }
+        for ((k, v) in rows) {
+            col.addView(TextView(this).apply {
+                text = k; textSize = 12f; setTextColor(Color.parseColor("#9AA3B2")); setPadding(0, dp(8), 0, 0)
+            })
+            col.addView(TextView(this).apply {
+                text = v; textSize = 16f; setTextColor(Color.WHITE)
+            })
+        }
+        col.addView(TextView(this).apply {
+            text = tr("Consoles disponíveis neste app"); textSize = 12f
+            setTextColor(Color.parseColor("#9AA3B2")); setPadding(0, dp(14), 0, dp(2))
+        })
+        for (sys in GameSystem.values()) {
+            val ok = File(applicationInfo.nativeLibraryDir, sys.coreLib).exists()
+            col.addView(TextView(this).apply {
+                text = (if (ok) "✓  " else "✗  ") + sys.label
+                textSize = 15f
+                setTextColor(if (ok) Color.parseColor("#7CFFB2") else Color.parseColor("#FF8A80"))
+            })
+        }
+        AlertDialog.Builder(this)
+            .setTitle("RetroDroid")
+            .setView(ScrollView(this).apply { addView(col) })
+            .setPositiveButton(tr("Canal no YouTube")) { _, _ -> openUrl(AppInfo.YOUTUBE_URL) }
+            .setNeutralButton(tr("Site oficial")) { _, _ -> openUrl(AppInfo.SITE_URL) }
+            .setNegativeButton(tr("Fechar"), null)
             .show()
     }
 
@@ -285,15 +351,19 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private val cardH get() = (rv.height * 0.80f).toInt()
-    private val cardW get() = (cardH * 0.80f).toInt()
+    // na horizontal o card segue a altura; na vertical ele é limitado pela largura da tela
+    private val cardW get() = minOf((rv.height * 0.64f).toInt(), (rv.width * 0.62f).toInt())
+    private val cardH get() = (cardW / 0.80f).toInt()
 
     private fun setupSizes() {
         if (rv.height <= 0) return
         val side = ((rv.width - cardW) / 2).coerceAtLeast(0)
         rv.setPadding(side, 0, side, 0)
         adapter.notifyDataSetChanged()
-        rv.post { updateCards(false) }
+        rv.post {
+            if (centerPos in 0..roms.size) lm.scrollToPositionWithOffset(centerPos, 0)
+            updateCards(false)
+        }
     }
 
     override fun onResume() {
@@ -311,7 +381,12 @@ class MainActivity : AppCompatActivity() {
         countText.visibility = if (roms.isEmpty()) View.GONE else View.VISIBLE
         countText.text = trf("%d jogo(s)", roms.size)
         adapter.notifyDataSetChanged()
-        val first = if (roms.isNotEmpty()) 1 else 0
+        val lastIdx = roms.indices.maxByOrNull { PlayStats.last(this, roms[it]) }
+        val first = when {
+            roms.isEmpty() -> 0
+            lastIdx != null && PlayStats.last(this, roms[lastIdx]) > 0L -> lastIdx + 1
+            else -> 1
+        }
         rv.post {
             if (centerPos < 0 || centerPos > roms.size) lm.scrollToPositionWithOffset(first, (rv.width - cardW) / 2 - rv.paddingLeft)
             updateCards(false)
@@ -365,6 +440,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun playTimeText(rom: File): String {
+        val min = PlayStats.total(this, rom) / 60000L
+        return when {
+            min <= 0L -> tr("Nunca jogado")
+            min < 60L -> trf("%d min jogados", min.toInt())
+            else -> trf("%d h %d min jogados", (min / 60).toInt(), (min % 60).toInt())
+        }
+    }
+
     private fun updateTitle() {
         val isGame = centerPos in 1..roms.size
         if (!isGame) {
@@ -374,7 +458,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             val rom = roms[centerPos - 1]
             gameTitle.text = titleOf(rom)
-            gameSub.text = RomDetector.detect(rom)?.label ?: ""
+            gameSub.text = (RomDetector.detect(rom)?.label ?: "") + "  •  " + playTimeText(rom)
             aurora.setAccent(accentOf(rom))
         }
         gameTitle.alpha = 0f

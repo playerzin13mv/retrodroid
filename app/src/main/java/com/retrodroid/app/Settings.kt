@@ -26,6 +26,26 @@ class Settings(context: Context) {
         get() = p.getBoolean("recControls", false)
         set(v) = p.edit().putBoolean("recControls", v).apply()
 
+    /** Gravar o som do jogo. */
+    var recGameAudio: Boolean
+        get() = p.getBoolean("recGameAudio", true)
+        set(v) = p.edit().putBoolean("recGameAudio", v).apply()
+
+    /** Gravar a voz do jogador (microfone). */
+    var recMic: Boolean
+        get() = p.getBoolean("recMic", false)
+        set(v) = p.edit().putBoolean("recMic", v).apply()
+
+    /** Abaixar o som do jogo quando o jogador fala (só vale com jogo + microfone). */
+    var recDuckOn: Boolean
+        get() = p.getBoolean("recDuckOn", true)
+        set(v) = p.edit().putBoolean("recDuckOn", v).apply()
+
+    /** Quanto o jogo abaixa quando o jogador fala (10 a 90 %). */
+    var recDuckPercent: Int
+        get() = p.getInt("recDuckPercent", 60)
+        set(v) = p.edit().putInt("recDuckPercent", v).apply()
+
     /** Áudio em modo que o Android consegue gravar (um pouco mais de atraso). */
     var recAudioCompat: Boolean
         get() = p.getBoolean("recAudioCompat", true)

@@ -3,6 +3,7 @@ package com.retrodroid.app
 import android.Manifest
 import android.app.Dialog
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -17,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.format.DateFormat
 import android.view.Gravity
 import android.view.InputDevice
@@ -83,6 +85,8 @@ class GameActivity : AppCompatActivity() {
     private var menuBody: FrameLayout? = null
     private var page = "main"
     private var recorder: VideoRecorder? = null
+    private var portraitMode = false
+    private var resumedAt = 0L
     private var d = 1f
 
     private fun dp(v: Int) = (v * d).toInt()
@@ -136,6 +140,16 @@ class GameActivity : AppCompatActivity() {
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // na vertical, o jogo ocupa só a parte de cima e os controles ficam embaixo
+        root.addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
+            val portrait = (b - t) > (r - l)
+            val want = if (portrait) (r - l) / 2 else 0
+            val lp = view.layoutParams as FrameLayout.LayoutParams
+            if (lp.bottomMargin != want) {
+                lp.bottomMargin = want
+                view.layoutParams = lp
+            }
+        }
 
         val pointerSource: Int? = try {
             GLRetroView::class.java.getField("MOTION_SOURCE_POINTER").getInt(null)
@@ -153,8 +167,16 @@ class GameActivity : AppCompatActivity() {
                 onRightStick = { x, y -> view.sendMotionEvent(GLRetroView.MOTION_SOURCE_ANALOG_RIGHT, x, y, 0) },
                 onPointer = { x, y, isDown ->
                     if (pointerSource != null) {
-                        if (isDown) view.sendMotionEvent(pointerSource, x, y, 0)
-                        else view.sendMotionEvent(pointerSource, -1f, -1f, 0)
+                        if (isDown) {
+                            val tc = touchControls
+                            val px = x * (tc?.width ?: view.width)
+                            val py = y * (tc?.height ?: view.height)
+                            val nx = ((px - view.left) / view.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                            val ny = ((py - view.top) / view.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                            view.sendMotionEvent(pointerSource, nx, ny, 0)
+                        } else {
+                            view.sendMotionEvent(pointerSource, -1f, -1f, 0)
+                        }
                     }
                 }
             )
@@ -310,11 +332,12 @@ class GameActivity : AppCompatActivity() {
             if (settings.showFps) fpsText.text = "FPS: $frames"
             recorder?.let { r ->
                 val peak = r.takePeak()
+                val mic = if (r.micEnabled) " 🎤" else ""
                 recText.text = when {
                     !r.hasAudio -> "● REC (sem áudio)"
                     r.audioError != null -> "● REC ⚠ " + r.audioError
-                    peak > 300 -> "● REC 🔊"
-                    else -> "● REC 🔇"
+                    peak > 300 -> "● REC 🔊" + mic
+                    else -> "● REC 🔇" + mic
                 }
             }
             frames = 0
@@ -324,11 +347,19 @@ class GameActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (retroView != null) ui.postDelayed(fpsTick, 1000)
+        if (retroView != null) {
+            ui.postDelayed(fpsTick, 1000)
+            resumedAt = SystemClock.elapsedRealtime()
+        }
     }
 
     override fun onPause() {
         ui.removeCallbacks(fpsTick)
+        if (retroView != null && resumedAt > 0L) {
+            val played = SystemClock.elapsedRealtime() - resumedAt
+            if (played > 3000) PlayStats.add(this, romFile, played)
+            resumedAt = 0L
+        }
         saveSram()
         if (recorder != null) stopRecording()
         super.onPause()
@@ -433,6 +464,8 @@ class GameActivity : AppCompatActivity() {
         col.addView(menuButton(tr("Continuar"), accent = true) { menu?.dismiss() })
         col.addView(menuButton(tr("Save State")) { showSlots(save = true) })
         col.addView(menuButton(tr("Load State")) { showSlots(save = false) })
+        col.addView(menuButton(tr("Tirar print")) { menu?.dismiss(); takeScreenshot() })
+        col.addView(menuButton(if (portraitMode) tr("Jogar na horizontal") else tr("Jogar na vertical")) { toggleOrientation() })
         col.addView(menuButton(if (recorder == null) tr("Gravar vídeo") else tr("■ Parar gravação")) {
             if (recorder == null) { beginRecording(); menu?.dismiss() } else { stopRecording(); showMain() }
         })
@@ -631,11 +664,13 @@ class GameActivity : AppCompatActivity() {
 
     // ----------------------------------------------------------------- vídeo (com áudio)
     private val audioPermLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) askProjection() else startRecording(null, tr("Sem permissão de áudio: gravando só a imagem"))
+        RecLog.add("permissão de áudio/microfone: " + (if (granted) "concedida" else "NEGADA"))
+        if (granted) afterPermission() else startRecording(null, tr("Sem permissão de áudio: gravando só a imagem"))
     }
 
     private val projectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
         val data = res.data
+        RecLog.add("pedido de captura de áudio: resultado=${res.resultCode} (-1 = aceito) dados=${data != null}")
         if (res.resultCode == RESULT_OK && data != null) {
             RecordService.start(applicationContext, res.resultCode, data) { projection ->
                 runOnUiThread {
@@ -649,11 +684,22 @@ class GameActivity : AppCompatActivity() {
 
     private fun beginRecording() {
         if (recorder != null) return
+        RecLog.clear()
+        RecLog.add("Android ${Build.VERSION.SDK_INT} (${Build.MANUFACTURER} ${Build.MODEL}); som do jogo=${settings.recGameAudio} voz=${settings.recMic} abaixar=${settings.recDuckOn}/${settings.recDuckPercent}%")
+        if (!settings.recGameAudio && !settings.recMic) {
+            startRecording(null, null)   // o jogador escolheu gravar sem áudio
+            return
+        }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            askProjection()
+            afterPermission()
         } else {
             audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+
+    /** Com a permissão em mãos: se for gravar o som do jogo, pede a captura de áudio; senão começa direto. */
+    private fun afterPermission() {
+        if (settings.recGameAudio) askProjection() else startRecording(null, null)
     }
 
     private fun askProjection() {
@@ -670,16 +716,19 @@ class GameActivity : AppCompatActivity() {
         val ov = touchControls ?: return
         val r = VideoRecorder(
             v, applicationContext, gameSystem, { ov.pressedIds }, projection,
-            settings.recInputs, settings.recFps, settings.recControls, { lastFps }, ov
+            settings.recInputs, settings.recFps, settings.recControls, { lastFps }, ov,
+            settings.recGameAudio && projection != null,
+            settings.recMic,
+            if (settings.recDuckOn) settings.recDuckPercent / 100f else 0f,
+            romFile.nameWithoutExtension
         )
         if (r.start()) {
             recorder = r
             recText.visibility = View.VISIBLE
             val msg = note ?: if (r.hasAudio) tr("Gravando com áudio… (menu → parar)") else tr("Gravando só a imagem… (menu → parar)")
             Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-            if (projection != null && !r.hasAudio) {
-                Toast.makeText(this, trf("Áudio falhou: %s", r.audioError ?: "?"), Toast.LENGTH_LONG).show()
-            }
+            val err = r.audioError
+            if (err != null) Toast.makeText(this, trf("Áudio falhou: %s", err), Toast.LENGTH_LONG).show()
         } else {
             RecordService.stop(applicationContext)
             Toast.makeText(this, tr("Não consegui iniciar a gravação"), Toast.LENGTH_LONG).show()
@@ -701,6 +750,38 @@ class GameActivity : AppCompatActivity() {
                 Toast.makeText(app, msg, Toast.LENGTH_LONG).show()
             }
         }.start()
+    }
+
+    // ----------------------------------------------------------------- vertical / horizontal e print
+    private fun toggleOrientation() {
+        portraitMode = !portraitMode
+        requestedOrientation = if (portraitMode) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        menu?.dismiss()
+    }
+
+    /** Print só da imagem do jogo (sem menu nem controles), salvo em Imagens/RetroDroid. */
+    private fun takeScreenshot() {
+        val v = retroView as? SurfaceView
+        if (v == null || v.width <= 0 || v.height <= 0) return
+        val bmp = Bitmap.createBitmap(v.width, v.height, Bitmap.Config.ARGB_8888)
+        val app = applicationContext
+        try {
+            PixelCopy.request(v, bmp, { r ->
+                if (r == PixelCopy.SUCCESS) {
+                    Thread {
+                        val ok = MediaSaver.savePng(app, bmp, "RetroDroid")
+                        ui.post {
+                            Toast.makeText(app, if (ok) tr("Print salvo em Imagens/RetroDroid") else tr("Falha ao salvar o print"), Toast.LENGTH_SHORT).show()
+                        }
+                    }.start()
+                } else {
+                    Toast.makeText(app, tr("Falha ao salvar o print"), Toast.LENGTH_SHORT).show()
+                }
+            }, Handler(Looper.getMainLooper()))
+        } catch (e: Exception) {
+            Toast.makeText(app, tr("Falha ao salvar o print"), Toast.LENGTH_SHORT).show()
+        }
     }
 
     // ----------------------------------------------------------------- mover botões
