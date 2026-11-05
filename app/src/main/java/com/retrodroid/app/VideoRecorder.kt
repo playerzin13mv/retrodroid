@@ -255,6 +255,8 @@ class VideoRecorder(
         var micCount = 0
         var duckGain = 1f
         var lastIn = 0L
+        var audioBase = -1L        // instante (relógio do sistema) do primeiro bloco de áudio
+        var framesQueued = 0L      // quantos quadros de áudio já foram para o codificador
         var reads = 0
         var lastLog = 0L
         var logPeak = 0
@@ -349,6 +351,17 @@ class VideoRecorder(
                 }
 
                 val len = outFrames * 4
+
+                // Carimbo de tempo do áudio. IMPORTANTE: tem que ser ABSOLUTO (mesmo relógio do vídeo),
+                // porque o writeSample já desconta o baseUs de todas as faixas. (Antes eu descontava duas
+                // vezes: todo o áudio ia parar no instante zero do arquivo e o vídeo ficava mudo.)
+                val realStart = nowUs() - bytesToUs(len)
+                if (audioBase < 0L) audioBase = realStart
+                var expected = audioBase + framesQueued * 1_000_000L / sampleRate
+                if (kotlin.math.abs(realStart - expected) > 80_000L) {   // desvio grande: realinha com o relógio
+                    audioBase += realStart - expected
+                    expected = realStart
+                }
                 var off = 0
                 while (off < len && running) {
                     val idx = ac.dequeueInputBuffer(10_000)
@@ -357,12 +370,13 @@ class VideoRecorder(
                     ib.clear()
                     val chunk = minOf(ib.remaining(), len - off)
                     ib.put(out, off, chunk)
-                    val pts = (nowUs() - baseUs - bytesToUs(len - off)).coerceAtLeast(0L)
+                    val pts = expected + bytesToUs(off)
                     ac.queueInputBuffer(idx, 0, chunk, pts, 0)
                     audioQueued++
                     lastIn = pts
                     off += chunk
                 }
+                framesQueued += outFrames
             }
             val idx = ac.dequeueInputBuffer(100_000)
             if (idx >= 0) ac.queueInputBuffer(idx, 0, 0, lastIn, MediaCodec.BUFFER_FLAG_END_OF_STREAM)

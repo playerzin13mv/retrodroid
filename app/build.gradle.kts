@@ -11,7 +11,7 @@ android {
         applicationId = "com.retrodroid.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
+        versionCode = 3
         versionName = "0.9 beta"
 
         // Os cores baixados pelo workflow são só arm64 (praticamente todo celular atual)
