@@ -102,5 +102,50 @@ object Layouts {
             LayoutItem("toggle_x", "toggle_x", Kind.TOGGLE, KeyEvent.KEYCODE_BUTTON_L1, 'R', 0.6800f, 0.6700f, 0.1150f),
             LayoutItem("toggle_b", "toggle_b", Kind.TOGGLE, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.6800f, 0.8600f, 0.1150f)
         )
+        GameSystem.GB -> listOf(
+            LayoutItem("dpad", "dpad", Kind.DPAD, 0, 'L', 0.3100f, 0.6900f, 0.5000f),
+            LayoutItem("a", "botao_a", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_A, 'R', 0.1900f, 0.7000f, 0.2000f),
+            LayoutItem("b", "botao_b", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.4100f, 0.7900f, 0.2000f),
+            LayoutItem("select", "botao_select", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_SELECT, 'C', -0.1680f, 0.8800f, 0.2800f),
+            LayoutItem("start", "botao_start", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_START, 'C', 0.1680f, 0.8800f, 0.2800f),
+            LayoutItem("toggle_b", "toggle_b", Kind.TOGGLE, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.6500f, 0.7900f, 0.1150f)
+        )
+        GameSystem.GBC -> listOf(
+            LayoutItem("dpad", "dpad", Kind.DPAD, 0, 'L', 0.3100f, 0.6900f, 0.5000f),
+            LayoutItem("a", "botao_a", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_A, 'R', 0.1900f, 0.7000f, 0.2000f),
+            LayoutItem("b", "botao_b", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.4100f, 0.7900f, 0.2000f),
+            LayoutItem("select", "botao_select", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_SELECT, 'C', -0.1680f, 0.8800f, 0.2800f),
+            LayoutItem("start", "botao_start", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_START, 'C', 0.1680f, 0.8800f, 0.2800f),
+            LayoutItem("toggle_b", "toggle_b", Kind.TOGGLE, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.6500f, 0.7900f, 0.1150f)
+        )
+        GameSystem.GBA -> listOf(
+            LayoutItem("dpad", "dpad", Kind.DPAD, 0, 'L', 0.3100f, 0.6900f, 0.5000f),
+            LayoutItem("a", "botao_a", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_A, 'R', 0.1900f, 0.7000f, 0.2000f),
+            LayoutItem("b", "botao_b", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.4100f, 0.7900f, 0.2000f),
+            LayoutItem("select", "botao_select", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_SELECT, 'C', -0.1680f, 0.8800f, 0.2800f),
+            LayoutItem("start", "botao_start", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_START, 'C', 0.1680f, 0.8800f, 0.2800f),
+            LayoutItem("toggle_b", "toggle_b", Kind.TOGGLE, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.6500f, 0.7900f, 0.1150f),
+            LayoutItem("l", "botao_l", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_L1, 'L', 0.2200f, 0.1400f, 0.3200f),
+            LayoutItem("r", "botao_r", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_R1, 'R', 0.2200f, 0.1400f, 0.3200f)
+        )
+        GameSystem.MASTER -> listOf(
+            LayoutItem("dpad", "dpad", Kind.DPAD, 0, 'L', 0.3100f, 0.6900f, 0.5000f),
+            LayoutItem("2", "botao_2", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_A, 'R', 0.1900f, 0.7600f, 0.2000f),
+            LayoutItem("1", "botao_1", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.4100f, 0.7600f, 0.2000f),
+            LayoutItem("start", "botao_start", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_START, 'C', 0.0000f, 0.8800f, 0.2800f)
+        )
+        GameSystem.GAMEGEAR -> listOf(
+            LayoutItem("dpad", "dpad", Kind.DPAD, 0, 'L', 0.3100f, 0.6900f, 0.5000f),
+            LayoutItem("2", "botao_2", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_A, 'R', 0.1900f, 0.7600f, 0.2000f),
+            LayoutItem("1", "botao_1", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.4100f, 0.7600f, 0.2000f),
+            LayoutItem("start", "botao_start", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_START, 'C', 0.0000f, 0.8800f, 0.2800f)
+        )
+        GameSystem.PCE -> listOf(
+            LayoutItem("dpad", "dpad", Kind.DPAD, 0, 'L', 0.3100f, 0.6900f, 0.5000f),
+            LayoutItem("i", "botao_i", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_A, 'R', 0.1900f, 0.7600f, 0.2000f),
+            LayoutItem("ii", "botao_ii", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_B, 'R', 0.4100f, 0.7600f, 0.2000f),
+            LayoutItem("select", "botao_select", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_SELECT, 'C', -0.1680f, 0.8800f, 0.2800f),
+            LayoutItem("run", "botao_run", Kind.BUTTON, KeyEvent.KEYCODE_BUTTON_START, 'C', 0.1680f, 0.8800f, 0.2800f)
+        )
     }
 }

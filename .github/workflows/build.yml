@@ -69,6 +69,9 @@ jobs:
           fetch ds_core melonds melondsds desmume
           fetch 3ds_core citra
           fetch saturn_core yabasanshiro yabause mednafen_saturn
+          fetch gb_core gambatte sameboy mgba
+          fetch gba_core mgba gpsp vba_next
+          fetch pce_core mednafen_pce_fast mednafen_pce
           ls -la
 
       - uses: gradle/actions/setup-gradle@v4

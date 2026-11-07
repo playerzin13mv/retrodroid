@@ -13,6 +13,12 @@ object HudLayouts {
         GameSystem.DS -> listOf(HudBody(4f, 6f, 112f, 52f, 10f))
         GameSystem.N3DS -> listOf(HudBody(4f, 6f, 112f, 52f, 10f))
         GameSystem.SATURN -> listOf(HudBody(4f, 14f, 112f, 44f, 20f))
+        GameSystem.GB -> listOf(HudBody(22.0f, 2.0f, 76.0f, 60.0f, 6.0f))
+        GameSystem.GBC -> listOf(HudBody(22.0f, 2.0f, 76.0f, 60.0f, 6.0f))
+        GameSystem.GBA -> listOf(HudBody(4.0f, 12.0f, 112.0f, 46.0f, 10.0f))
+        GameSystem.MASTER -> listOf(HudBody(4.0f, 14.0f, 112.0f, 44.0f, 18.0f))
+        GameSystem.GAMEGEAR -> listOf(HudBody(4.0f, 10.0f, 112.0f, 50.0f, 10.0f))
+        GameSystem.PCE -> listOf(HudBody(4.0f, 14.0f, 112.0f, 44.0f, 6.0f))
     }
 
     fun elements(s: GameSystem): List<HudEl> = when (s) {
@@ -117,6 +123,70 @@ object HudLayouts {
             HudEl("y", 'c', 83.0f, 27.0f, 8f, 8f, "Y"),
             HudEl("z", 'c', 96.0f, 27.0f, 8f, 8f, "Z"),
             HudEl("start", 'r', 50f, 42f, 14f, 4f, "")
+        )
+        GameSystem.GB -> listOf(
+            HudEl("screen", 'r', 30.0f, 6.0f, 60.0f, 26.0f, ""),
+            HudEl("up", 'r', 36.0f, 36.0f, 8.0f, 11.0f, ""),
+            HudEl("down", 'r', 36.0f, 47.0f, 8.0f, 11.0f, ""),
+            HudEl("left", 'r', 29.0f, 43.0f, 11.0f, 8.0f, ""),
+            HudEl("right", 'r', 40.0f, 43.0f, 11.0f, 8.0f, ""),
+            HudEl("a", 'c', 83.5f, 39.5f, 9.0f, 9.0f, "A"),
+            HudEl("b", 'c', 72.5f, 45.5f, 9.0f, 9.0f, "B"),
+            HudEl("select", 'r', 50.0f, 54.0f, 9.0f, 3.0f, ""),
+            HudEl("start", 'r', 61.0f, 54.0f, 9.0f, 3.0f, "")
+        )
+        GameSystem.GBC -> listOf(
+            HudEl("screen", 'r', 30.0f, 6.0f, 60.0f, 26.0f, ""),
+            HudEl("up", 'r', 36.0f, 36.0f, 8.0f, 11.0f, ""),
+            HudEl("down", 'r', 36.0f, 47.0f, 8.0f, 11.0f, ""),
+            HudEl("left", 'r', 29.0f, 43.0f, 11.0f, 8.0f, ""),
+            HudEl("right", 'r', 40.0f, 43.0f, 11.0f, 8.0f, ""),
+            HudEl("a", 'c', 83.5f, 39.5f, 9.0f, 9.0f, "A"),
+            HudEl("b", 'c', 72.5f, 45.5f, 9.0f, 9.0f, "B"),
+            HudEl("select", 'r', 50.0f, 54.0f, 9.0f, 3.0f, ""),
+            HudEl("start", 'r', 61.0f, 54.0f, 9.0f, 3.0f, "")
+        )
+        GameSystem.GBA -> listOf(
+            HudEl("l", 'r', 8.0f, 5.0f, 26.0f, 8.0f, "L"),
+            HudEl("r", 'r', 86.0f, 5.0f, 26.0f, 8.0f, "R"),
+            HudEl("screen", 'r', 36.0f, 17.0f, 48.0f, 34.0f, ""),
+            HudEl("up", 'r', 20.0f, 24.0f, 8.0f, 11.0f, ""),
+            HudEl("down", 'r', 20.0f, 35.0f, 8.0f, 11.0f, ""),
+            HudEl("left", 'r', 13.0f, 31.0f, 11.0f, 8.0f, ""),
+            HudEl("right", 'r', 24.0f, 31.0f, 11.0f, 8.0f, ""),
+            HudEl("a", 'c', 98.0f, 26.0f, 10.0f, 10.0f, "A"),
+            HudEl("b", 'c', 89.0f, 35.0f, 10.0f, 10.0f, "B"),
+            HudEl("select", 'r', 14.0f, 50.0f, 10.0f, 3.0f, ""),
+            HudEl("start", 'r', 96.0f, 50.0f, 10.0f, 3.0f, "")
+        )
+        GameSystem.MASTER -> listOf(
+            HudEl("up", 'r', 24.0f, 25.0f, 8.0f, 11.0f, ""),
+            HudEl("down", 'r', 24.0f, 36.0f, 8.0f, 11.0f, ""),
+            HudEl("left", 'r', 17.0f, 32.0f, 11.0f, 8.0f, ""),
+            HudEl("right", 'r', 28.0f, 32.0f, 11.0f, 8.0f, ""),
+            HudEl("2", 'c', 92.5f, 32.5f, 11.0f, 11.0f, "2"),
+            HudEl("1", 'c', 78.5f, 38.5f, 11.0f, 11.0f, "1"),
+            HudEl("start", 'r', 52.0f, 46.0f, 12.0f, 4.0f, "")
+        )
+        GameSystem.GAMEGEAR -> listOf(
+            HudEl("screen", 'r', 34.0f, 14.0f, 52.0f, 34.0f, ""),
+            HudEl("up", 'r', 16.0f, 25.0f, 8.0f, 11.0f, ""),
+            HudEl("down", 'r', 16.0f, 36.0f, 8.0f, 11.0f, ""),
+            HudEl("left", 'r', 9.0f, 32.0f, 11.0f, 8.0f, ""),
+            HudEl("right", 'r', 20.0f, 32.0f, 11.0f, 8.0f, ""),
+            HudEl("2", 'c', 97.0f, 25.0f, 10.0f, 10.0f, "2"),
+            HudEl("1", 'c', 90.0f, 35.0f, 10.0f, 10.0f, "1"),
+            HudEl("start", 'r', 100.0f, 50.0f, 12.0f, 4.0f, "")
+        )
+        GameSystem.PCE -> listOf(
+            HudEl("up", 'r', 24.0f, 25.0f, 8.0f, 11.0f, ""),
+            HudEl("down", 'r', 24.0f, 36.0f, 8.0f, 11.0f, ""),
+            HudEl("left", 'r', 17.0f, 32.0f, 11.0f, 8.0f, ""),
+            HudEl("right", 'r', 28.0f, 32.0f, 11.0f, 8.0f, ""),
+            HudEl("select", 'r', 48.0f, 44.0f, 11.0f, 4.0f, ""),
+            HudEl("run", 'r', 61.0f, 44.0f, 11.0f, 4.0f, ""),
+            HudEl("ii", 'c', 82.5f, 32.5f, 11.0f, 11.0f, "II"),
+            HudEl("i", 'c', 97.5f, 32.5f, 11.0f, 11.0f, "I")
         )
     }
 }

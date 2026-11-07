@@ -82,6 +82,12 @@ class MainActivity : AppCompatActivity() {
             GameSystem.DS -> "#8E9AAF"
             GameSystem.N3DS -> "#E0457B"
             GameSystem.SATURN -> "#00B8D9"
+            GameSystem.GB -> "#8BAC0F"
+            GameSystem.GBC -> "#9C6BD6"
+            GameSystem.GBA -> "#5C6BC0"
+            GameSystem.MASTER -> "#E53935"
+            GameSystem.GAMEGEAR -> "#607D8B"
+            GameSystem.PCE -> "#FB8C00"
             null -> "#555555"
         }
     )
@@ -453,7 +459,7 @@ class MainActivity : AppCompatActivity() {
         val isGame = centerPos in 1..roms.size
         if (!isGame) {
             gameTitle.text = if (roms.isEmpty()) tr("Nenhum jogo ainda") else tr("Adicionar ROMs")
-            gameSub.text = if (roms.isEmpty()) tr("Toque no card + para escolher seus arquivos") else ".sfc .smc .gen .md .bin .nes .z64 .n64 .v64 .nds .3ds .cue .iso .chd .zip .7z"
+            gameSub.text = if (roms.isEmpty()) tr("Toque no card + para escolher seus arquivos") else ".sfc .smc .gen .md .bin .nes .z64 .n64 .v64 .nds .3ds .cue .iso .chd .gb .gbc .gba .sms .gg .pce .zip .7z"
             aurora.setAccent(defaultAccent)
         } else {
             val rom = roms[centerPos - 1]
